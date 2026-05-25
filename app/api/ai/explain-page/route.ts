@@ -9,6 +9,7 @@ import {
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
 import { getAiModel } from "../../../../lib/aiModels";
+import { logSafeServerError } from "../../../../lib/safeErrorLog";
 
 export const runtime = "nodejs";
 
@@ -67,49 +68,18 @@ function getOpenAIErrorMessage(error: unknown) {
     }
 
     if (maybeError.message) {
-      return `OpenAI returned an error: ${maybeError.message}`;
+      return "NordEditor AI could not explain this page. Please try again.";
     }
   }
 
   return "NordEditor AI could not explain this page. Please try again.";
 }
 
-function logOpenAIError(
-  error: unknown,
-  model: string,
-  pageNumber: number,
-  pdfName: string,
-  pageTextLength: number
-) {
-  if (error && typeof error === "object") {
-    const maybeError = error as {
-      status?: number;
-      code?: string;
-      type?: string;
-      message?: string;
-      request_id?: string;
-    };
-
-    console.error("NordEditor AI page explanation failed", {
-      status: maybeError.status,
-      code: maybeError.code,
-      type: maybeError.type,
-      message: maybeError.message,
-      requestId: maybeError.request_id,
-      model,
-      pageNumber,
-      pdfName,
-      pageTextLength
-    });
-    return;
-  }
-
-  console.error("NordEditor AI page explanation failed", {
-    message: "Unknown AI error",
-    model,
-    pageNumber,
-    pdfName,
-    pageTextLength
+function logOpenAIError(error: unknown) {
+  logSafeServerError({
+    route: "/api/ai/explain-page",
+    featureArea: "ai-page-explanation",
+    error
   });
 }
 
@@ -225,9 +195,7 @@ export async function POST(request: Request) {
       rateLimit
     );
   } catch (error) {
-    const model = getAiModel({ featureModelEnvName: "OPENAI_EXPLAIN_MODEL" });
-
-    logOpenAIError(error, model, pageNumber, pdfName, pageText.length);
+    logOpenAIError(error);
     return createAiJsonError(getOpenAIErrorMessage(error), 502, rateLimit);
   }
 }

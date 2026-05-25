@@ -9,6 +9,7 @@ import {
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
 import { getAiModel } from "../../../../lib/aiModels";
+import { logSafeServerError } from "../../../../lib/safeErrorLog";
 
 export const runtime = "nodejs";
 
@@ -67,43 +68,18 @@ function getOpenAIErrorMessage(error: unknown) {
     }
 
     if (maybeError.message) {
-      return `OpenAI returned an error: ${maybeError.message}`;
+      return "NordEditor AI could not find suggested edits. Please try again.";
     }
   }
 
   return "NordEditor AI could not find suggested edits. Please try again.";
 }
 
-function logOpenAIError(error: unknown, pdfFile: File, model: string) {
-  if (error && typeof error === "object") {
-    const maybeError = error as {
-      status?: number;
-      code?: string;
-      type?: string;
-      message?: string;
-      request_id?: string;
-    };
-
-    console.error("NordEditor AI suggested edits failed", {
-      status: maybeError.status,
-      code: maybeError.code,
-      type: maybeError.type,
-      message: maybeError.message,
-      requestId: maybeError.request_id,
-      model,
-      pdfName: pdfFile.name,
-      pdfSize: pdfFile.size,
-      pdfType: pdfFile.type
-    });
-    return;
-  }
-
-  console.error("NordEditor AI suggested edits failed", {
-    message: "Unknown AI error",
-    model,
-    pdfName: pdfFile.name,
-    pdfSize: pdfFile.size,
-    pdfType: pdfFile.type
+function logOpenAIError(error: unknown) {
+  logSafeServerError({
+    route: "/api/ai/suggest-edits",
+    featureArea: "ai-suggested-edits",
+    error
   });
 }
 
@@ -218,9 +194,7 @@ export async function POST(request: Request) {
 
     return createAiJsonResponse<SuggestedEditsResponse>({ suggestedEdits }, rateLimit);
   } catch (error) {
-    const model = getAiModel({ featureModelEnvName: "OPENAI_SUGGEST_EDITS_MODEL" });
-
-    logOpenAIError(error, pdfFile, model);
+    logOpenAIError(error);
     return createAiJsonError(getOpenAIErrorMessage(error), 502, rateLimit);
   }
 }
