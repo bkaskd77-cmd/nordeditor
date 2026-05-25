@@ -185,6 +185,8 @@ type AiResponseView =
   | "customAnswer";
 
 type AiUsageInfo = {
+  role: "public" | "beta" | "admin";
+  roleLabel: string;
   limit: number;
   used: number;
   remaining: number;
@@ -878,6 +880,9 @@ export default function PdfWorkspace() {
   const [didCopyAiKeyInfo, setDidCopyAiKeyInfo] = useState(false);
   const [didCopyAiSuggestedEdits, setDidCopyAiSuggestedEdits] = useState(false);
   const [didCopyAiCustomAnswer, setDidCopyAiCustomAnswer] = useState(false);
+  const [aiAccessCode, setAiAccessCode] = useState("");
+  const [aiAccessMessage, setAiAccessMessage] = useState("");
+  const [isApplyingAiAccess, setIsApplyingAiAccess] = useState(false);
 
   const updateAiUsage = useCallback((nextUsage?: AiUsageInfo) => {
     if (nextUsage) {
@@ -902,6 +907,88 @@ export default function PdfWorkspace() {
       setIsLoadingAiUsage(false);
     }
   }, [updateAiUsage]);
+
+  async function applyAiAccessCode() {
+    const code = aiAccessCode.trim();
+
+    if (!code) {
+      setAiAccessMessage("Enter your private beta/testing access code first.");
+      return;
+    }
+
+    setIsApplyingAiAccess(true);
+    setAiAccessMessage("");
+
+    try {
+      const response = await fetch("/api/ai/access", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ code })
+      });
+      const result = (await response.json()) as {
+        message?: string;
+        error?: string;
+        aiUsage?: AiUsageInfo;
+      };
+
+      updateAiUsage(result.aiUsage);
+
+      if (!response.ok) {
+        throw new Error(result.error ?? "Private beta/testing access could not be enabled.");
+      }
+
+      setAiAccessCode("");
+      setAiAccessMessage(result.message ?? "Private beta/testing access is active.");
+
+      if (result.aiUsage?.role) {
+        sessionStorage.setItem("nordeditor_ai_access_role", result.aiUsage.role);
+      }
+    } catch (accessError) {
+      setAiAccessMessage(
+        accessError instanceof Error
+          ? accessError.message
+          : "Private beta/testing access could not be enabled."
+      );
+    } finally {
+      setIsApplyingAiAccess(false);
+    }
+  }
+
+  async function clearAiAccessCode() {
+    setIsApplyingAiAccess(true);
+    setAiAccessMessage("");
+
+    try {
+      const response = await fetch("/api/ai/access", {
+        method: "DELETE"
+      });
+      const result = (await response.json()) as {
+        message?: string;
+        error?: string;
+        aiUsage?: AiUsageInfo;
+      };
+
+      updateAiUsage(result.aiUsage);
+
+      if (!response.ok) {
+        throw new Error(result.error ?? "Private beta/testing access could not be turned off.");
+      }
+
+      sessionStorage.removeItem("nordeditor_ai_access_role");
+      setAiAccessCode("");
+      setAiAccessMessage(result.message ?? "Private beta/testing access is off.");
+    } catch (accessError) {
+      setAiAccessMessage(
+        accessError instanceof Error
+          ? accessError.message
+          : "Private beta/testing access could not be turned off."
+      );
+    } finally {
+      setIsApplyingAiAccess(false);
+    }
+  }
 
   useEffect(() => {
     const stage = viewerStageRef.current;
@@ -4633,8 +4720,10 @@ export default function PdfWorkspace() {
     isFindingSuggestedEdits ||
     isAskingAiQuestion;
   const isAiLimitReached = aiUsage?.isLimited ?? false;
+  const isPrivateAiAccessActive = aiUsage?.role === "admin" || aiUsage?.role === "beta";
+  const aiRoleLabel = aiUsage?.roleLabel ?? "Public";
   const aiUsageLabel = aiUsage
-    ? `AI actions left today: ${aiUsage.remaining}/${aiUsage.limit}`
+    ? `${aiRoleLabel} AI actions left today: ${aiUsage.remaining}/${aiUsage.limit}`
     : isLoadingAiUsage
       ? "Checking AI actions left..."
       : "AI actions left today: 5/5";
@@ -4925,6 +5014,51 @@ export default function PdfWorkspace() {
               >
                 <span>{aiUsageLabel}</span>
                 {isAiLimitReached ? <span>{aiLimitMessage}</span> : null}
+              </div>
+
+              <div className="ai-access-card">
+                <div className="ai-access-copy">
+                  <strong>Private beta/testing</strong>
+                  <span>
+                    Optional access code for owner testing. Public users keep the free daily
+                    limit.
+                  </span>
+                </div>
+                {isPrivateAiAccessActive ? (
+                  <button
+                    className="ai-access-button"
+                    type="button"
+                    onClick={clearAiAccessCode}
+                    disabled={isApplyingAiAccess}
+                  >
+                    Exit private access
+                  </button>
+                ) : (
+                  <div className="ai-access-controls">
+                    <input
+                      className="ai-access-input"
+                      type="password"
+                      placeholder="Access code"
+                      value={aiAccessCode}
+                      onChange={(event) => setAiAccessCode(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void applyAiAccessCode();
+                        }
+                      }}
+                    />
+                    <button
+                      className="ai-access-button"
+                      type="button"
+                      onClick={applyAiAccessCode}
+                      disabled={isApplyingAiAccess}
+                    >
+                      {isApplyingAiAccess ? "Checking..." : "Apply"}
+                    </button>
+                  </div>
+                )}
+                {aiAccessMessage ? <p>{aiAccessMessage}</p> : null}
               </div>
 
               <div className="ai-quick-actions" aria-label="AI example prompts">

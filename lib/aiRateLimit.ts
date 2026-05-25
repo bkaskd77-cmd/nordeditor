@@ -1,7 +1,11 @@
-import { createHash, randomUUID } from "crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
+export type AiAccessRole = "public" | "beta" | "admin";
+
 export type AiUsageInfo = {
+  role: AiAccessRole;
+  roleLabel: string;
   limit: number;
   used: number;
   remaining: number;
@@ -29,16 +33,24 @@ export type AiRateLimitResult = {
 };
 
 const DEFAULT_AI_DAILY_LIMIT = 5;
+const DEFAULT_AI_ADMIN_DAILY_LIMIT = 50;
+const DEFAULT_AI_BETA_DAILY_LIMIT = 20;
 const DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT = 100;
 const DEFAULT_AI_MONTHLY_BUDGET_USD = 10;
 const MICRO_USD_PER_USD = 1_000_000;
 const AI_SESSION_COOKIE_NAME = "nordeditor_ai_session";
+const AI_ACCESS_COOKIE_NAME = "nordeditor_ai_access";
 const AI_LIMIT_MESSAGE = "Daily free AI limit reached. More AI access coming with Pro.";
+const AI_ADMIN_LIMIT_MESSAGE =
+  "Daily owner/testing AI limit reached. Manual PDF editing is still available.";
+const AI_BETA_LIMIT_MESSAGE =
+  "Daily beta AI limit reached. Manual PDF editing is still available.";
 const AI_GLOBAL_DAILY_LIMIT_MESSAGE =
   "Daily beta AI request limit reached. Manual PDF editing is still available.";
 const AI_MONTHLY_BUDGET_LIMIT_MESSAGE =
   "Monthly beta AI limit reached. Manual PDF editing is still available.";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const AI_ACCESS_MAX_AGE_SECONDS = 60 * 60 * 12;
 
 const MODEL_COST_USD_PER_1M_TOKENS: Record<string, { input: number; output: number }> = {
   "gpt-4o-mini": { input: 0.15, output: 0.6 }
@@ -63,24 +75,33 @@ function getMemoryStore() {
   return globalStore.__nordeditorAiRateLimitStore;
 }
 
-function getDailyLimit() {
-  const configuredLimit = Number(process.env.AI_DAILY_LIMIT);
+function getConfiguredPositiveInteger(name: string, fallback: number) {
+  const configuredLimit = Number(process.env[name]);
 
   if (Number.isFinite(configuredLimit) && configuredLimit > 0) {
     return Math.floor(configuredLimit);
   }
 
-  return DEFAULT_AI_DAILY_LIMIT;
+  return fallback;
+}
+
+export function getDailyLimitForRole(role: AiAccessRole) {
+  if (role === "admin") {
+    return getConfiguredPositiveInteger("AI_ADMIN_DAILY_LIMIT", DEFAULT_AI_ADMIN_DAILY_LIMIT);
+  }
+
+  if (role === "beta") {
+    return getConfiguredPositiveInteger("AI_BETA_DAILY_LIMIT", DEFAULT_AI_BETA_DAILY_LIMIT);
+  }
+
+  return getConfiguredPositiveInteger("AI_DAILY_LIMIT", DEFAULT_AI_DAILY_LIMIT);
 }
 
 function getGlobalDailyRequestLimit() {
-  const configuredLimit = Number(process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT);
-
-  if (Number.isFinite(configuredLimit) && configuredLimit > 0) {
-    return Math.floor(configuredLimit);
-  }
-
-  return DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT;
+  return getConfiguredPositiveInteger(
+    "AI_GLOBAL_DAILY_REQUEST_LIMIT",
+    DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT
+  );
 }
 
 function getMonthlyBudgetMicroUsd() {
@@ -137,6 +158,128 @@ function getCookieValue(request: Request, name: string) {
   }
 
   return null;
+}
+
+function getRoleLabel(role: AiAccessRole) {
+  if (role === "admin") {
+    return "Owner/testing";
+  }
+
+  if (role === "beta") {
+    return "Private beta";
+  }
+
+  return "Public";
+}
+
+function getAccessSigningSecret() {
+  return (
+    process.env.AI_ADMIN_ACCESS_CODE ??
+    process.env.AI_BETA_ACCESS_CODE ??
+    process.env.OPENAI_API_KEY ??
+    ""
+  );
+}
+
+function signAccessPayload(payload: string) {
+  const secret = getAccessSigningSecret();
+
+  if (!secret) {
+    return "";
+  }
+
+  return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+function safeTextEquals(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function createAccessCookieValue(role: Exclude<AiAccessRole, "public">) {
+  const expiresAtMs = Date.now() + AI_ACCESS_MAX_AGE_SECONDS * 1000;
+  const payload = Buffer.from(JSON.stringify({ role, expiresAtMs })).toString("base64url");
+  const signature = signAccessPayload(payload);
+
+  if (!signature) {
+    return null;
+  }
+
+  return `${payload}.${signature}`;
+}
+
+export function validateAiAccessCode(code: string): AiAccessRole | null {
+  const trimmedCode = code.trim();
+  const adminCode = process.env.AI_ADMIN_ACCESS_CODE?.trim();
+  const betaCode = process.env.AI_BETA_ACCESS_CODE?.trim();
+
+  if (adminCode && safeTextEquals(trimmedCode, adminCode)) {
+    return "admin";
+  }
+
+  if (betaCode && safeTextEquals(trimmedCode, betaCode)) {
+    return "beta";
+  }
+
+  return null;
+}
+
+export function createAiAccessCookieHeader(role: Exclude<AiAccessRole, "public">) {
+  const cookieValue = createAccessCookieValue(role);
+
+  if (!cookieValue) {
+    return null;
+  }
+
+  const isProduction = process.env.NODE_ENV === "production";
+  const secureFlag = isProduction ? "; Secure" : "";
+
+  return `${AI_ACCESS_COOKIE_NAME}=${encodeURIComponent(
+    cookieValue
+  )}; Path=/; Max-Age=${AI_ACCESS_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${secureFlag}`;
+}
+
+export function createAiAccessClearCookieHeader() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const secureFlag = isProduction ? "; Secure" : "";
+
+  return `${AI_ACCESS_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureFlag}`;
+}
+
+export function getAiAccessRole(request: Request): AiAccessRole {
+  const cookieValue = getCookieValue(request, AI_ACCESS_COOKIE_NAME);
+
+  if (!cookieValue) {
+    return "public";
+  }
+
+  const [payload, signature] = cookieValue.split(".");
+  const expectedSignature = signAccessPayload(payload ?? "");
+
+  if (!payload || !signature || !expectedSignature || !safeTextEquals(signature, expectedSignature)) {
+    return "public";
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      role?: AiAccessRole;
+      expiresAtMs?: number;
+    };
+
+    if (
+      (parsed.role === "admin" || parsed.role === "beta") &&
+      typeof parsed.expiresAtMs === "number" &&
+      parsed.expiresAtMs > Date.now()
+    ) {
+      return parsed.role;
+    }
+  } catch {
+    return "public";
+  }
+
+  return "public";
 }
 
 function getClientIp(request: Request) {
@@ -322,7 +465,19 @@ function microUsdToUsd(microUsd: number) {
   return Number((microUsd / MICRO_USD_PER_USD).toFixed(6));
 }
 
-function getLimitMessage(limitReason?: AiUsageInfo["limitReason"]) {
+function getUserDailyLimitMessage(role: AiAccessRole) {
+  if (role === "admin") {
+    return AI_ADMIN_LIMIT_MESSAGE;
+  }
+
+  if (role === "beta") {
+    return AI_BETA_LIMIT_MESSAGE;
+  }
+
+  return AI_LIMIT_MESSAGE;
+}
+
+function getLimitMessage(limitReason: AiUsageInfo["limitReason"] | undefined, role: AiAccessRole) {
   if (limitReason === "monthly_budget") {
     return AI_MONTHLY_BUDGET_LIMIT_MESSAGE;
   }
@@ -332,7 +487,7 @@ function getLimitMessage(limitReason?: AiUsageInfo["limitReason"]) {
   }
 
   if (limitReason === "user_daily") {
-    return AI_LIMIT_MESSAGE;
+    return getUserDailyLimitMessage(role);
   }
 
   return undefined;
@@ -348,7 +503,8 @@ function buildUsage({
   monthlySpendMicroUsd,
   monthlyBudgetMicroUsd,
   monthlyResetAt,
-  limitReason
+  limitReason,
+  role
 }: {
   userCount: number;
   userLimit: number;
@@ -360,6 +516,7 @@ function buildUsage({
   monthlyBudgetMicroUsd: number;
   monthlyResetAt: string;
   limitReason?: AiUsageInfo["limitReason"];
+  role: AiAccessRole;
 }): AiUsageInfo {
   const used = Math.min(Math.max(0, userCount), userLimit);
   const remaining = Math.max(0, userLimit - used);
@@ -380,6 +537,8 @@ function buildUsage({
           : undefined);
 
   return {
+    role,
+    roleLabel: getRoleLabel(role),
     limit: userLimit,
     used,
     remaining,
@@ -393,7 +552,7 @@ function buildUsage({
     monthlyBudgetRemainingUsd: microUsdToUsd(monthlyBudgetRemainingMicroUsd),
     monthlyResetAt,
     limitReason: resolvedLimitReason,
-    message: getLimitMessage(resolvedLimitReason),
+    message: getLimitMessage(resolvedLimitReason, role),
     isLimited: Boolean(resolvedLimitReason)
   };
 }
@@ -455,7 +614,8 @@ function estimateAiCostMicroUsd(model: string, usage: unknown) {
 }
 
 export async function getAiRateLimitStatus(request: Request): Promise<AiRateLimitResult> {
-  const userLimit = getDailyLimit();
+  const accessRole = getAiAccessRole(request);
+  const userLimit = getDailyLimitForRole(accessRole);
   const globalDailyLimit = getGlobalDailyRequestLimit();
   const monthlyBudgetMicroUsd = getMonthlyBudgetMicroUsd();
   const todayWindow = getTodayWindow();
@@ -476,7 +636,8 @@ export async function getAiRateLimitStatus(request: Request): Promise<AiRateLimi
     globalDailyResetAt: todayWindow.resetAt,
     monthlySpendMicroUsd,
     monthlyBudgetMicroUsd,
-    monthlyResetAt: monthWindow.resetAt
+    monthlyResetAt: monthWindow.resetAt,
+    role: accessRole
   });
 
   applyUsageHeaders(headers, usage);
@@ -492,7 +653,8 @@ export async function getAiRateLimitStatus(request: Request): Promise<AiRateLimi
 }
 
 export async function checkAiRateLimit(request: Request): Promise<AiRateLimitResult> {
-  const userLimit = getDailyLimit();
+  const accessRole = getAiAccessRole(request);
+  const userLimit = getDailyLimitForRole(accessRole);
   const globalDailyLimit = getGlobalDailyRequestLimit();
   const monthlyBudgetMicroUsd = getMonthlyBudgetMicroUsd();
   const todayWindow = getTodayWindow();
@@ -518,7 +680,8 @@ export async function checkAiRateLimit(request: Request): Promise<AiRateLimitRes
       monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
       monthlyBudgetMicroUsd,
       monthlyResetAt: monthWindow.resetAt,
-      limitReason: "user_daily"
+      limitReason: "user_daily",
+      role: accessRole
     });
     applyUsageHeaders(headers, usage);
 
@@ -543,7 +706,8 @@ export async function checkAiRateLimit(request: Request): Promise<AiRateLimitRes
       monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
       monthlyBudgetMicroUsd,
       monthlyResetAt: monthWindow.resetAt,
-      limitReason: "global_daily"
+      limitReason: "global_daily",
+      role: accessRole
     });
     applyUsageHeaders(headers, usage);
 
@@ -568,7 +732,8 @@ export async function checkAiRateLimit(request: Request): Promise<AiRateLimitRes
       monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
       monthlyBudgetMicroUsd,
       monthlyResetAt: monthWindow.resetAt,
-      limitReason: "monthly_budget"
+      limitReason: "monthly_budget",
+      role: accessRole
     });
     applyUsageHeaders(headers, usage);
 
@@ -597,7 +762,8 @@ export async function checkAiRateLimit(request: Request): Promise<AiRateLimitRes
     globalDailyResetAt: todayWindow.resetAt,
     monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
     monthlyBudgetMicroUsd,
-    monthlyResetAt: monthWindow.resetAt
+    monthlyResetAt: monthWindow.resetAt,
+    role: accessRole
   });
   applyUsageHeaders(headers, usage);
 
@@ -676,5 +842,5 @@ export function createAiJsonError(
 }
 
 export function createAiLimitReachedResponse(rateLimit: AiRateLimitResult) {
-  return createAiJsonError(AI_LIMIT_MESSAGE, 429, rateLimit);
+  return createAiJsonError(rateLimit.usage.message ?? AI_LIMIT_MESSAGE, 429, rateLimit);
 }

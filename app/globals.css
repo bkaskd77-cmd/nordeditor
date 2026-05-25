@@ -827,6 +827,83 @@ select {
   color: var(--danger);
 }
 
+.ai-access-card {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  border: 1px solid rgba(var(--soft-gold-rgb), 0.26);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 253, 247, 0.82);
+  color: var(--muted);
+}
+
+.ai-access-copy {
+  display: grid;
+  gap: 2px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.ai-access-copy strong {
+  color: var(--deep-slate);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.ai-access-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.ai-access-input {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.ai-access-input:focus {
+  border-color: rgba(20, 92, 114, 0.5);
+  outline: 3px solid rgba(20, 92, 114, 0.12);
+}
+
+.ai-access-button {
+  min-height: 36px;
+  border: 1px solid rgba(var(--deep-teal-rgb), 0.24);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ai-access-button:hover:not(:disabled) {
+  border-color: rgba(var(--deep-teal-rgb), 0.42);
+  background: #f5fafb;
+}
+
+.ai-access-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-access-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .ai-quick-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

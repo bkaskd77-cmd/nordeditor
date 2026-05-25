@@ -8,12 +8,12 @@ import {
   recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
+import { getAiModel } from "../../../../lib/aiModels";
 
 export const runtime = "nodejs";
 
 const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_QUESTION_CHARS = 4_000;
-const DEFAULT_ASK_MODEL = "gpt-4o-mini";
 const OPENAI_TIMEOUT_MS = 75_000;
 const PDF_DATA_URL_PREFIX = "data:application/pdf;base64,";
 
@@ -179,8 +179,7 @@ export async function POST(request: Request) {
       return createAiLimitReachedResponse(rateLimit);
     }
 
-    const model =
-      process.env.OPENAI_ASK_MODEL ?? process.env.OPENAI_SUMMARY_MODEL ?? DEFAULT_ASK_MODEL;
+    const model = getAiModel({ featureModelEnvName: "OPENAI_ASK_MODEL" });
     const client = new OpenAI({
       apiKey,
       timeout: OPENAI_TIMEOUT_MS
@@ -237,8 +236,7 @@ export async function POST(request: Request) {
 
     return createAiJsonResponse<AskResponse>({ answer }, rateLimit);
   } catch (error) {
-    const model =
-      process.env.OPENAI_ASK_MODEL ?? process.env.OPENAI_SUMMARY_MODEL ?? DEFAULT_ASK_MODEL;
+    const model = getAiModel({ featureModelEnvName: "OPENAI_ASK_MODEL" });
 
     logOpenAIError(error, pdfFile, model, question.length);
     return createAiJsonError(getOpenAIErrorMessage(error), 502, rateLimit);

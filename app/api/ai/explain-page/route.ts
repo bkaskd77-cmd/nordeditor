@@ -8,10 +8,10 @@ import {
   recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
+import { getAiModel } from "../../../../lib/aiModels";
 
 export const runtime = "nodejs";
 
-const DEFAULT_EXPLAIN_MODEL = "gpt-4o-mini";
 const OPENAI_TIMEOUT_MS = 75_000;
 const MAX_PAGE_TEXT_CHARS = 80_000;
 
@@ -165,8 +165,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const model =
-      process.env.OPENAI_EXPLAIN_MODEL ?? process.env.OPENAI_SUMMARY_MODEL ?? DEFAULT_EXPLAIN_MODEL;
+    const model = getAiModel({ featureModelEnvName: "OPENAI_EXPLAIN_MODEL" });
 
     rateLimit = await checkAiRateLimit(request);
 
@@ -226,8 +225,7 @@ export async function POST(request: Request) {
       rateLimit
     );
   } catch (error) {
-    const model =
-      process.env.OPENAI_EXPLAIN_MODEL ?? process.env.OPENAI_SUMMARY_MODEL ?? DEFAULT_EXPLAIN_MODEL;
+    const model = getAiModel({ featureModelEnvName: "OPENAI_EXPLAIN_MODEL" });
 
     logOpenAIError(error, model, pageNumber, pdfName, pageText.length);
     return createAiJsonError(getOpenAIErrorMessage(error), 502, rateLimit);
