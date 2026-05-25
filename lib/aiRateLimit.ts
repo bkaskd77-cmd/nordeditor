@@ -6,6 +6,16 @@ export type AiUsageInfo = {
   used: number;
   remaining: number;
   resetAt: string;
+  globalDailyLimit: number;
+  globalDailyUsed: number;
+  globalDailyRemaining: number;
+  globalDailyResetAt: string;
+  monthlyBudgetUsd: number;
+  monthlyEstimatedSpendUsd: number;
+  monthlyBudgetRemainingUsd: number;
+  monthlyResetAt: string;
+  limitReason?: "user_daily" | "global_daily" | "monthly_budget";
+  message?: string;
   isLimited: boolean;
 };
 
@@ -13,12 +23,26 @@ export type AiRateLimitResult = {
   allowed: boolean;
   usage: AiUsageInfo;
   headers: Headers;
+  monthlyCostKey: string;
+  monthlyResetAtMs: number;
+  monthlyBudgetMicroUsd: number;
 };
 
 const DEFAULT_AI_DAILY_LIMIT = 5;
+const DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT = 100;
+const DEFAULT_AI_MONTHLY_BUDGET_USD = 10;
+const MICRO_USD_PER_USD = 1_000_000;
 const AI_SESSION_COOKIE_NAME = "nordeditor_ai_session";
 const AI_LIMIT_MESSAGE = "Daily free AI limit reached. More AI access coming with Pro.";
+const AI_GLOBAL_DAILY_LIMIT_MESSAGE =
+  "Daily beta AI request limit reached. Manual PDF editing is still available.";
+const AI_MONTHLY_BUDGET_LIMIT_MESSAGE =
+  "Monthly beta AI limit reached. Manual PDF editing is still available.";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+const MODEL_COST_USD_PER_1M_TOKENS: Record<string, { input: number; output: number }> = {
+  "gpt-4o-mini": { input: 0.15, output: 0.6 }
+};
 
 type MemoryRateLimitRecord = {
   count: number;
@@ -49,10 +73,43 @@ function getDailyLimit() {
   return DEFAULT_AI_DAILY_LIMIT;
 }
 
+function getGlobalDailyRequestLimit() {
+  const configuredLimit = Number(process.env.AI_GLOBAL_DAILY_REQUEST_LIMIT);
+
+  if (Number.isFinite(configuredLimit) && configuredLimit > 0) {
+    return Math.floor(configuredLimit);
+  }
+
+  return DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT;
+}
+
+function getMonthlyBudgetMicroUsd() {
+  const configuredBudget = Number(process.env.AI_MONTHLY_BUDGET_USD);
+  const budgetUsd =
+    Number.isFinite(configuredBudget) && configuredBudget > 0
+      ? configuredBudget
+      : DEFAULT_AI_MONTHLY_BUDGET_USD;
+
+  return Math.round(budgetUsd * MICRO_USD_PER_USD);
+}
+
 function getTodayWindow() {
   const now = new Date();
   const dateKey = now.toISOString().slice(0, 10);
   const resetAtMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+
+  return {
+    dateKey,
+    resetAtMs,
+    resetAt: new Date(resetAtMs).toISOString(),
+    secondsUntilReset: Math.max(60, Math.ceil((resetAtMs - now.getTime()) / 1000))
+  };
+}
+
+function getMonthWindow() {
+  const now = new Date();
+  const dateKey = now.toISOString().slice(0, 7);
+  const resetAtMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 
   return {
     dateKey,
@@ -172,24 +229,18 @@ async function runRedisCommand<T>(command: Array<string | number>) {
   return data.result ?? null;
 }
 
-function buildUsage(count: number, limit: number, resetAt: string): AiUsageInfo {
-  const used = Math.min(Math.max(0, count), limit);
-  const remaining = Math.max(0, limit - used);
-
-  return {
-    limit,
-    used,
-    remaining,
-    resetAt,
-    isLimited: remaining <= 0
-  };
-}
-
 function applyUsageHeaders(headers: Headers, usage: AiUsageInfo) {
   headers.set("X-NordEditor-AI-Limit", String(usage.limit));
   headers.set("X-NordEditor-AI-Used", String(usage.used));
   headers.set("X-NordEditor-AI-Remaining", String(usage.remaining));
   headers.set("X-NordEditor-AI-Reset", usage.resetAt);
+  headers.set("X-NordEditor-AI-Global-Daily-Limit", String(usage.globalDailyLimit));
+  headers.set("X-NordEditor-AI-Global-Daily-Used", String(usage.globalDailyUsed));
+  headers.set("X-NordEditor-AI-Monthly-Budget-USD", String(usage.monthlyBudgetUsd));
+  headers.set(
+    "X-NordEditor-AI-Monthly-Estimated-Spend-USD",
+    String(usage.monthlyEstimatedSpendUsd)
+  );
 }
 
 async function getCount(key: string) {
@@ -207,6 +258,20 @@ async function incrementCount(key: string, secondsUntilReset: number) {
 
   if (nextCount !== null) {
     if (nextCount === 1) {
+      await runRedisCommand(["EXPIRE", key, secondsUntilReset]);
+    }
+
+    return Number(nextCount) || 0;
+  }
+
+  return null;
+}
+
+async function incrementCountBy(key: string, amount: number, secondsUntilReset: number) {
+  const nextCount = await runRedisCommand<number>(["INCRBY", key, amount]);
+
+  if (nextCount !== null) {
+    if (nextCount === amount) {
       await runRedisCommand(["EXPIRE", key, secondsUntilReset]);
     }
 
@@ -240,51 +305,345 @@ function incrementMemoryCount(key: string, resetAtMs: number) {
   return nextCount;
 }
 
+function incrementMemoryCountBy(key: string, amount: number, resetAtMs: number) {
+  const memoryStore = getMemoryStore();
+  const currentCount = getMemoryCount(key);
+  const nextCount = currentCount + amount;
+
+  memoryStore.set(key, {
+    count: nextCount,
+    resetAtMs
+  });
+
+  return nextCount;
+}
+
+function microUsdToUsd(microUsd: number) {
+  return Number((microUsd / MICRO_USD_PER_USD).toFixed(6));
+}
+
+function getLimitMessage(limitReason?: AiUsageInfo["limitReason"]) {
+  if (limitReason === "monthly_budget") {
+    return AI_MONTHLY_BUDGET_LIMIT_MESSAGE;
+  }
+
+  if (limitReason === "global_daily") {
+    return AI_GLOBAL_DAILY_LIMIT_MESSAGE;
+  }
+
+  if (limitReason === "user_daily") {
+    return AI_LIMIT_MESSAGE;
+  }
+
+  return undefined;
+}
+
+function buildUsage({
+  userCount,
+  userLimit,
+  userResetAt,
+  globalDailyCount,
+  globalDailyLimit,
+  globalDailyResetAt,
+  monthlySpendMicroUsd,
+  monthlyBudgetMicroUsd,
+  monthlyResetAt,
+  limitReason
+}: {
+  userCount: number;
+  userLimit: number;
+  userResetAt: string;
+  globalDailyCount: number;
+  globalDailyLimit: number;
+  globalDailyResetAt: string;
+  monthlySpendMicroUsd: number;
+  monthlyBudgetMicroUsd: number;
+  monthlyResetAt: string;
+  limitReason?: AiUsageInfo["limitReason"];
+}): AiUsageInfo {
+  const used = Math.min(Math.max(0, userCount), userLimit);
+  const remaining = Math.max(0, userLimit - used);
+  const globalDailyUsed = Math.min(Math.max(0, globalDailyCount), globalDailyLimit);
+  const globalDailyRemaining = Math.max(0, globalDailyLimit - globalDailyUsed);
+  const monthlyBudgetRemainingMicroUsd = Math.max(
+    0,
+    monthlyBudgetMicroUsd - monthlySpendMicroUsd
+  );
+  const resolvedLimitReason =
+    limitReason ??
+    (monthlySpendMicroUsd >= monthlyBudgetMicroUsd
+      ? "monthly_budget"
+      : globalDailyRemaining <= 0
+        ? "global_daily"
+        : remaining <= 0
+          ? "user_daily"
+          : undefined);
+
+  return {
+    limit: userLimit,
+    used,
+    remaining,
+    resetAt: userResetAt,
+    globalDailyLimit,
+    globalDailyUsed,
+    globalDailyRemaining,
+    globalDailyResetAt,
+    monthlyBudgetUsd: microUsdToUsd(monthlyBudgetMicroUsd),
+    monthlyEstimatedSpendUsd: microUsdToUsd(monthlySpendMicroUsd),
+    monthlyBudgetRemainingUsd: microUsdToUsd(monthlyBudgetRemainingMicroUsd),
+    monthlyResetAt,
+    limitReason: resolvedLimitReason,
+    message: getLimitMessage(resolvedLimitReason),
+    isLimited: Boolean(resolvedLimitReason)
+  };
+}
+
+function getModelCost(model: string) {
+  const inputOverride = Number(process.env.AI_COST_INPUT_USD_PER_1M_TOKENS);
+  const outputOverride = Number(process.env.AI_COST_OUTPUT_USD_PER_1M_TOKENS);
+
+  if (
+    Number.isFinite(inputOverride) &&
+    inputOverride >= 0 &&
+    Number.isFinite(outputOverride) &&
+    outputOverride >= 0
+  ) {
+    return {
+      input: inputOverride,
+      output: outputOverride
+    };
+  }
+
+  return MODEL_COST_USD_PER_1M_TOKENS[model] ?? MODEL_COST_USD_PER_1M_TOKENS["gpt-4o-mini"];
+}
+
+function getFallbackRequestCostMicroUsd() {
+  const configuredCost = Number(process.env.AI_FALLBACK_REQUEST_COST_USD);
+  const fallbackCostUsd =
+    Number.isFinite(configuredCost) && configuredCost >= 0 ? configuredCost : 0.002;
+
+  return Math.max(1, Math.ceil(fallbackCostUsd * MICRO_USD_PER_USD));
+}
+
+function getUsageNumber(usage: unknown, key: string) {
+  if (!usage || typeof usage !== "object") {
+    return 0;
+  }
+
+  const value = (usage as Record<string, unknown>)[key];
+
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function estimateAiCostMicroUsd(model: string, usage: unknown) {
+  const inputTokens =
+    getUsageNumber(usage, "input_tokens") || getUsageNumber(usage, "prompt_tokens");
+  const outputTokens =
+    getUsageNumber(usage, "output_tokens") || getUsageNumber(usage, "completion_tokens");
+
+  if (inputTokens <= 0 && outputTokens <= 0) {
+    return getFallbackRequestCostMicroUsd();
+  }
+
+  const modelCost = getModelCost(model);
+
+  // OpenAI usage is token-only metadata. We store estimated cost, never PDF text or prompts.
+  return Math.max(
+    1,
+    Math.ceil(inputTokens * modelCost.input + outputTokens * modelCost.output)
+  );
+}
+
 export async function getAiRateLimitStatus(request: Request): Promise<AiRateLimitResult> {
-  const limit = getDailyLimit();
-  const { dateKey, resetAt } = getTodayWindow();
+  const userLimit = getDailyLimit();
+  const globalDailyLimit = getGlobalDailyRequestLimit();
+  const monthlyBudgetMicroUsd = getMonthlyBudgetMicroUsd();
+  const todayWindow = getTodayWindow();
+  const monthWindow = getMonthWindow();
   const { headers, identityHash } = getIdentity(request);
-  const key = `nordeditor:ai:${dateKey}:${identityHash}`;
-  const durableCount = await getCount(key);
-  const count = durableCount ?? getMemoryCount(key);
-  const usage = buildUsage(count, limit, resetAt);
+  const userDailyKey = `nordeditor:ai:user:${todayWindow.dateKey}:${identityHash}`;
+  const globalDailyKey = `nordeditor:ai:global:${todayWindow.dateKey}`;
+  const monthlyCostKey = `nordeditor:ai:cost:${monthWindow.dateKey}`;
+  const userDailyCount = (await getCount(userDailyKey)) ?? getMemoryCount(userDailyKey);
+  const globalDailyCount = (await getCount(globalDailyKey)) ?? getMemoryCount(globalDailyKey);
+  const monthlySpendMicroUsd = (await getCount(monthlyCostKey)) ?? getMemoryCount(monthlyCostKey);
+  const usage = buildUsage({
+    userCount: userDailyCount,
+    userLimit,
+    userResetAt: todayWindow.resetAt,
+    globalDailyCount,
+    globalDailyLimit,
+    globalDailyResetAt: todayWindow.resetAt,
+    monthlySpendMicroUsd,
+    monthlyBudgetMicroUsd,
+    monthlyResetAt: monthWindow.resetAt
+  });
 
   applyUsageHeaders(headers, usage);
 
   return {
     allowed: !usage.isLimited,
     usage,
-    headers
+    headers,
+    monthlyCostKey,
+    monthlyResetAtMs: monthWindow.resetAtMs,
+    monthlyBudgetMicroUsd
   };
 }
 
 export async function checkAiRateLimit(request: Request): Promise<AiRateLimitResult> {
-  const limit = getDailyLimit();
-  const { dateKey, resetAtMs, resetAt, secondsUntilReset } = getTodayWindow();
+  const userLimit = getDailyLimit();
+  const globalDailyLimit = getGlobalDailyRequestLimit();
+  const monthlyBudgetMicroUsd = getMonthlyBudgetMicroUsd();
+  const todayWindow = getTodayWindow();
+  const monthWindow = getMonthWindow();
   const { headers, identityHash } = getIdentity(request);
-  const key = `nordeditor:ai:${dateKey}:${identityHash}`;
-  const currentCount = (await getCount(key)) ?? getMemoryCount(key);
+  const userDailyKey = `nordeditor:ai:user:${todayWindow.dateKey}:${identityHash}`;
+  const globalDailyKey = `nordeditor:ai:global:${todayWindow.dateKey}`;
+  const monthlyCostKey = `nordeditor:ai:cost:${monthWindow.dateKey}`;
+  const currentUserCount = (await getCount(userDailyKey)) ?? getMemoryCount(userDailyKey);
+  const currentGlobalDailyCount =
+    (await getCount(globalDailyKey)) ?? getMemoryCount(globalDailyKey);
+  const currentMonthlySpendMicroUsd =
+    (await getCount(monthlyCostKey)) ?? getMemoryCount(monthlyCostKey);
 
-  if (currentCount >= limit) {
-    const usage = buildUsage(currentCount, limit, resetAt);
+  if (currentUserCount >= userLimit) {
+    const usage = buildUsage({
+      userCount: currentUserCount,
+      userLimit,
+      userResetAt: todayWindow.resetAt,
+      globalDailyCount: currentGlobalDailyCount,
+      globalDailyLimit,
+      globalDailyResetAt: todayWindow.resetAt,
+      monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
+      monthlyBudgetMicroUsd,
+      monthlyResetAt: monthWindow.resetAt,
+      limitReason: "user_daily"
+    });
     applyUsageHeaders(headers, usage);
 
     return {
       allowed: false,
       usage,
-      headers
+      headers,
+      monthlyCostKey,
+      monthlyResetAtMs: monthWindow.resetAtMs,
+      monthlyBudgetMicroUsd
     };
   }
 
-  const nextCount = (await incrementCount(key, secondsUntilReset)) ?? incrementMemoryCount(key, resetAtMs);
-  const usage = buildUsage(nextCount, limit, resetAt);
+  if (currentGlobalDailyCount >= globalDailyLimit) {
+    const usage = buildUsage({
+      userCount: currentUserCount,
+      userLimit,
+      userResetAt: todayWindow.resetAt,
+      globalDailyCount: currentGlobalDailyCount,
+      globalDailyLimit,
+      globalDailyResetAt: todayWindow.resetAt,
+      monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
+      monthlyBudgetMicroUsd,
+      monthlyResetAt: monthWindow.resetAt,
+      limitReason: "global_daily"
+    });
+    applyUsageHeaders(headers, usage);
+
+    return {
+      allowed: false,
+      usage,
+      headers,
+      monthlyCostKey,
+      monthlyResetAtMs: monthWindow.resetAtMs,
+      monthlyBudgetMicroUsd
+    };
+  }
+
+  if (currentMonthlySpendMicroUsd >= monthlyBudgetMicroUsd) {
+    const usage = buildUsage({
+      userCount: currentUserCount,
+      userLimit,
+      userResetAt: todayWindow.resetAt,
+      globalDailyCount: currentGlobalDailyCount,
+      globalDailyLimit,
+      globalDailyResetAt: todayWindow.resetAt,
+      monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
+      monthlyBudgetMicroUsd,
+      monthlyResetAt: monthWindow.resetAt,
+      limitReason: "monthly_budget"
+    });
+    applyUsageHeaders(headers, usage);
+
+    return {
+      allowed: false,
+      usage,
+      headers,
+      monthlyCostKey,
+      monthlyResetAtMs: monthWindow.resetAtMs,
+      monthlyBudgetMicroUsd
+    };
+  }
+
+  const nextUserCount =
+    (await incrementCount(userDailyKey, todayWindow.secondsUntilReset)) ??
+    incrementMemoryCount(userDailyKey, todayWindow.resetAtMs);
+  const nextGlobalDailyCount =
+    (await incrementCount(globalDailyKey, todayWindow.secondsUntilReset)) ??
+    incrementMemoryCount(globalDailyKey, todayWindow.resetAtMs);
+  const usage = buildUsage({
+    userCount: nextUserCount,
+    userLimit,
+    userResetAt: todayWindow.resetAt,
+    globalDailyCount: nextGlobalDailyCount,
+    globalDailyLimit,
+    globalDailyResetAt: todayWindow.resetAt,
+    monthlySpendMicroUsd: currentMonthlySpendMicroUsd,
+    monthlyBudgetMicroUsd,
+    monthlyResetAt: monthWindow.resetAt
+  });
   applyUsageHeaders(headers, usage);
 
   return {
-    allowed: nextCount <= limit,
+    allowed: nextUserCount <= userLimit && nextGlobalDailyCount <= globalDailyLimit,
     usage,
-    headers
+    headers,
+    monthlyCostKey,
+    monthlyResetAtMs: monthWindow.resetAtMs,
+    monthlyBudgetMicroUsd
   };
+}
+
+export async function recordAiResponseUsage(
+  rateLimit: AiRateLimitResult,
+  model: string,
+  usage: unknown
+) {
+  const estimatedCostMicroUsd = estimateAiCostMicroUsd(model, usage);
+  const monthWindow = getMonthWindow();
+  const nextMonthlySpendMicroUsd =
+    (await incrementCountBy(
+      rateLimit.monthlyCostKey,
+      estimatedCostMicroUsd,
+      monthWindow.secondsUntilReset
+    )) ?? incrementMemoryCountBy(rateLimit.monthlyCostKey, estimatedCostMicroUsd, monthWindow.resetAtMs);
+
+  rateLimit.usage = {
+    ...rateLimit.usage,
+    monthlyEstimatedSpendUsd: microUsdToUsd(nextMonthlySpendMicroUsd),
+    monthlyBudgetRemainingUsd: microUsdToUsd(
+      Math.max(0, rateLimit.monthlyBudgetMicroUsd - nextMonthlySpendMicroUsd)
+    ),
+    limitReason:
+      nextMonthlySpendMicroUsd >= rateLimit.monthlyBudgetMicroUsd
+        ? "monthly_budget"
+        : rateLimit.usage.limitReason,
+    message:
+      nextMonthlySpendMicroUsd >= rateLimit.monthlyBudgetMicroUsd
+        ? AI_MONTHLY_BUDGET_LIMIT_MESSAGE
+        : rateLimit.usage.message,
+    isLimited:
+      nextMonthlySpendMicroUsd >= rateLimit.monthlyBudgetMicroUsd || rateLimit.usage.isLimited
+  };
+
+  applyUsageHeaders(rateLimit.headers, rateLimit.usage);
 }
 
 export function createAiJsonResponse<T extends object>(body: T, rateLimit: AiRateLimitResult) {

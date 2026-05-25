@@ -148,7 +148,7 @@ const AI_PAGE_EXPLANATION_TIMEOUT_MS = 90_000;
 const AI_KEY_INFO_TIMEOUT_MS = 90_000;
 const AI_SUGGESTED_EDITS_TIMEOUT_MS = 90_000;
 const AI_CUSTOM_QUESTION_TIMEOUT_MS = 90_000;
-const AI_DAILY_LIMIT_REACHED_MESSAGE =
+const AI_LIMIT_REACHED_FALLBACK_MESSAGE =
   "Daily free AI limit reached. More AI access coming with Pro.";
 const HIGHLIGHT_COLOR_VALUES: Record<
   HighlightColorName,
@@ -189,6 +189,16 @@ type AiUsageInfo = {
   used: number;
   remaining: number;
   resetAt: string;
+  globalDailyLimit: number;
+  globalDailyUsed: number;
+  globalDailyRemaining: number;
+  globalDailyResetAt: string;
+  monthlyBudgetUsd: number;
+  monthlyEstimatedSpendUsd: number;
+  monthlyBudgetRemainingUsd: number;
+  monthlyResetAt: string;
+  limitReason?: "user_daily" | "global_daily" | "monthly_budget";
+  message?: string;
   isLimited: boolean;
 };
 
@@ -3620,7 +3630,7 @@ export default function PdfWorkspace() {
     }
 
     if (aiUsage?.isLimited) {
-      setAiError(AI_DAILY_LIMIT_REACHED_MESSAGE);
+      setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
       return;
@@ -3763,7 +3773,7 @@ export default function PdfWorkspace() {
     }
 
     if (aiUsage?.isLimited) {
-      setAiError(AI_DAILY_LIMIT_REACHED_MESSAGE);
+      setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
       return;
@@ -3870,7 +3880,7 @@ export default function PdfWorkspace() {
     }
 
     if (aiUsage?.isLimited) {
-      setAiError(AI_DAILY_LIMIT_REACHED_MESSAGE);
+      setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
       return;
@@ -3966,7 +3976,7 @@ export default function PdfWorkspace() {
     }
 
     if (aiUsage?.isLimited) {
-      setAiError(AI_DAILY_LIMIT_REACHED_MESSAGE);
+      setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
       return;
@@ -4075,7 +4085,7 @@ export default function PdfWorkspace() {
     }
 
     if (aiUsage?.isLimited) {
-      setAiError(AI_DAILY_LIMIT_REACHED_MESSAGE);
+      setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
       return;
@@ -4622,12 +4632,13 @@ export default function PdfWorkspace() {
     isExtractingKeyInfo ||
     isFindingSuggestedEdits ||
     isAskingAiQuestion;
-  const isAiDailyLimitReached = aiUsage?.isLimited ?? false;
+  const isAiLimitReached = aiUsage?.isLimited ?? false;
   const aiUsageLabel = aiUsage
     ? `AI actions left today: ${aiUsage.remaining}/${aiUsage.limit}`
     : isLoadingAiUsage
       ? "Checking AI actions left..."
       : "AI actions left today: 5/5";
+  const aiLimitMessage = aiUsage?.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE;
   const isAiResponseLoading = isShowingCustomAnswer
     ? isAskingAiQuestion
     : isShowingSuggestedEdits
@@ -4702,8 +4713,8 @@ export default function PdfWorkspace() {
         : isShowingPageExplanation
           ? copyAiPageExplanation
           : copyAiSummary;
-  const activeAiPanelNote = isAiDailyLimitReached
-    ? AI_DAILY_LIMIT_REACHED_MESSAGE
+  const activeAiPanelNote = isAiLimitReached
+    ? aiLimitMessage
     : "Suggestions are not applied automatically.";
 
   return (
@@ -4907,41 +4918,41 @@ export default function PdfWorkspace() {
 
               <div
                 className={
-                  isAiDailyLimitReached
+                  isAiLimitReached
                     ? "ai-usage-status ai-usage-status-limited"
                     : "ai-usage-status"
                 }
               >
                 <span>{aiUsageLabel}</span>
-                {isAiDailyLimitReached ? <span>{AI_DAILY_LIMIT_REACHED_MESSAGE}</span> : null}
+                {isAiLimitReached ? <span>{aiLimitMessage}</span> : null}
               </div>
 
               <div className="ai-quick-actions" aria-label="AI example prompts">
                 <button
                   type="button"
                   onClick={summarizePdfWithAi}
-                  disabled={isAiBusy || isAiDailyLimitReached}
+                  disabled={isAiBusy || isAiLimitReached}
                 >
                   {isSummarizingPdf ? "Summarizing..." : "Summarize PDF"}
                 </button>
                 <button
                   type="button"
                   onClick={explainCurrentPageWithAi}
-                  disabled={isAiBusy || isAiDailyLimitReached}
+                  disabled={isAiBusy || isAiLimitReached}
                 >
                   {isExplainingPage ? "Explaining page..." : "Explain current page"}
                 </button>
                 <button
                   type="button"
                   onClick={extractKeyInfoWithAi}
-                  disabled={isAiBusy || isAiDailyLimitReached}
+                  disabled={isAiBusy || isAiLimitReached}
                 >
                   {isExtractingKeyInfo ? "Extracting key info..." : "Extract key info"}
                 </button>
                 <button
                   type="button"
                   onClick={suggestEditsWithAi}
-                  disabled={isAiBusy || isAiDailyLimitReached}
+                  disabled={isAiBusy || isAiLimitReached}
                 >
                   {isFindingSuggestedEdits ? "Finding suggested edits..." : "Suggest edits"}
                 </button>
@@ -4980,7 +4991,7 @@ export default function PdfWorkspace() {
                   className="ai-send-button"
                   type="button"
                   onClick={askCustomQuestionWithAi}
-                  disabled={isAiBusy || isAiDailyLimitReached}
+                  disabled={isAiBusy || isAiLimitReached}
                 >
                   {isAskingAiQuestion ? "Thinking..." : "Send"}
                 </button>

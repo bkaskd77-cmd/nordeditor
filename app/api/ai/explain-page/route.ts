@@ -5,6 +5,7 @@ import {
   createAiJsonError,
   createAiJsonResponse,
   createAiLimitReachedResponse,
+  recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
 
@@ -207,6 +208,8 @@ export async function POST(request: Request) {
         }
       ]
     });
+
+    await recordAiResponseUsage(rateLimit, model, response.usage);
 
     const explanation = response.output_text?.trim();
 
