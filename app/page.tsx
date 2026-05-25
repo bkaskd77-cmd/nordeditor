@@ -1,4 +1,5 @@
 import Link from "next/link";
+import FeedbackModal from "../components/FeedbackModal";
 import PdfWorkspace from "../components/PdfWorkspace";
 
 export default function Home() {
@@ -46,6 +47,8 @@ export default function Home() {
         <span aria-hidden="true">&bull;</span>
         <span>&copy; NordEditor</span>
       </footer>
+
+      <FeedbackModal />
     </main>
   );
 }
