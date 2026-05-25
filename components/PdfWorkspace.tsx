@@ -883,6 +883,7 @@ export default function PdfWorkspace() {
   const [aiAccessCode, setAiAccessCode] = useState("");
   const [aiAccessMessage, setAiAccessMessage] = useState("");
   const [isApplyingAiAccess, setIsApplyingAiAccess] = useState(false);
+  const [canShowAiAccessInput, setCanShowAiAccessInput] = useState(false);
 
   const updateAiUsage = useCallback((nextUsage?: AiUsageInfo) => {
     if (nextUsage) {
@@ -907,6 +908,16 @@ export default function PdfWorkspace() {
       setIsLoadingAiUsage(false);
     }
   }, [updateAiUsage]);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+
+      setCanShowAiAccessInput(params.get("nord_admin") === "1");
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, []);
 
   async function applyAiAccessCode() {
     const code = aiAccessCode.trim();
@@ -4721,6 +4732,8 @@ export default function PdfWorkspace() {
     isAskingAiQuestion;
   const isAiLimitReached = aiUsage?.isLimited ?? false;
   const isPrivateAiAccessActive = aiUsage?.role === "admin" || aiUsage?.role === "beta";
+  const shouldShowAiAccessInput = canShowAiAccessInput && !isPrivateAiAccessActive;
+  const shouldShowAiAccessStatus = isPrivateAiAccessActive;
   const aiRoleLabel = aiUsage?.roleLabel ?? "Public";
   const aiUsageLabel = aiUsage
     ? `${aiRoleLabel} AI actions left today: ${aiUsage.remaining}/${aiUsage.limit}`
@@ -5016,24 +5029,26 @@ export default function PdfWorkspace() {
                 {isAiLimitReached ? <span>{aiLimitMessage}</span> : null}
               </div>
 
-              <div className="ai-access-card">
-                <div className="ai-access-copy">
-                  <strong>Private beta/testing</strong>
-                  <span>
-                    Optional access code for owner testing. Public users keep the free daily
-                    limit.
-                  </span>
-                </div>
-                {isPrivateAiAccessActive ? (
+              {shouldShowAiAccessStatus ? (
+                <div className="ai-access-status">
+                  <span>Owner/testing mode active</span>
                   <button
-                    className="ai-access-button"
+                    className="ai-access-exit"
                     type="button"
                     onClick={clearAiAccessCode}
                     disabled={isApplyingAiAccess}
                   >
-                    Exit private access
+                    Exit
                   </button>
-                ) : (
+                </div>
+              ) : null}
+
+              {shouldShowAiAccessInput ? (
+                <div className="ai-access-card">
+                  <div className="ai-access-copy">
+                    <strong>Have beta access?</strong>
+                    <span>Enter your private testing code.</span>
+                  </div>
                   <div className="ai-access-controls">
                     <input
                       className="ai-access-input"
@@ -5057,9 +5072,9 @@ export default function PdfWorkspace() {
                       {isApplyingAiAccess ? "Checking..." : "Apply"}
                     </button>
                   </div>
-                )}
-                {aiAccessMessage ? <p>{aiAccessMessage}</p> : null}
-              </div>
+                  {aiAccessMessage ? <p>{aiAccessMessage}</p> : null}
+                </div>
+              ) : null}
 
               <div className="ai-quick-actions" aria-label="AI example prompts">
                 <button

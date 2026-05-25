@@ -63,6 +63,7 @@ type MemoryRateLimitRecord = {
 
 type GlobalMemoryStore = typeof globalThis & {
   __nordeditorAiRateLimitStore?: Map<string, MemoryRateLimitRecord>;
+  __nordeditorAiMemoryLimitWarningShown?: boolean;
 };
 
 function getMemoryStore() {
@@ -347,10 +348,22 @@ function getDurableStoreConfig() {
   return null;
 }
 
+function warnIfUsingMemoryStore() {
+  const globalStore = globalThis as GlobalMemoryStore;
+
+  if (globalStore.__nordeditorAiMemoryLimitWarningShown) {
+    return;
+  }
+
+  globalStore.__nordeditorAiMemoryLimitWarningShown = true;
+  console.warn("Using in-memory AI limits. Not safe for public production.");
+}
+
 async function runRedisCommand<T>(command: Array<string | number>) {
   const config = getDurableStoreConfig();
 
   if (!config) {
+    warnIfUsingMemoryStore();
     return null;
   }
 

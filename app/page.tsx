@@ -10,6 +10,7 @@ export default function Home() {
             N
           </span>
           <span>NordEditor</span>
+          <span className="beta-badge">Beta</span>
         </Link>
       </header>
 

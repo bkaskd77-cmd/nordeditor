@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="NordEditor">
+  <rect width="180" height="180" rx="40" fill="#145c72"/>
+  <rect x="19" y="19" width="142" height="142" rx="32" fill="none" stroke="#d8a84f" stroke-opacity="0.34" stroke-width="6"/>
+  <path d="M58 122V58h20l25 37V58h19v64h-18L77 83v39H58Z" fill="#fff"/>
+</svg>
