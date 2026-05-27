@@ -204,6 +204,18 @@ type AiUsageInfo = {
   isLimited: boolean;
 };
 
+type PdfUploadLimitResponse = {
+  error?: string;
+  pdfUploadUsage?: {
+    limit: number;
+    used: number;
+    remaining: number;
+    resetAt: string;
+    isLimited: boolean;
+    message?: string;
+  };
+};
+
 function renderAiInlineMarkdown(text: string) {
   const parts: ReactNode[] = [];
   const boldPattern = /\*\*(.+?)\*\*/g;
@@ -1361,6 +1373,21 @@ export default function PdfWorkspace() {
     draggingCommentRef.current = null;
   }
 
+  async function checkPdfUploadAllowance() {
+    const response = await fetch("/api/pdf/upload-limit", {
+      method: "POST",
+      cache: "no-store"
+    });
+    const result = (await response.json().catch(() => ({}))) as PdfUploadLimitResponse;
+
+    if (!response.ok) {
+      throw new Error(
+        result.error ??
+          "PDF upload protection is temporarily unavailable. Please try again."
+      );
+    }
+  }
+
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
@@ -1379,6 +1406,18 @@ export default function PdfWorkspace() {
     if (file.size > MAX_PDF_UPLOAD_BYTES) {
       setError(
         `This PDF is ${formatFileSize(file.size)}. For V1, please choose a PDF under ${formatFileSize(MAX_PDF_UPLOAD_BYTES)}.`
+      );
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      await checkPdfUploadAllowance();
+    } catch (uploadLimitError) {
+      setError(
+        uploadLimitError instanceof Error
+          ? uploadLimitError.message
+          : "PDF upload protection is temporarily unavailable. Please try again."
       );
       event.target.value = "";
       return;
