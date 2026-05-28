@@ -1112,6 +1112,29 @@ select {
   color: var(--danger);
 }
 
+.limit-pro-access-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(var(--deep-teal-rgb), 0.28);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: #ffffff;
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(var(--deep-slate-rgb), 0.08);
+}
+
+.limit-pro-access-button:hover {
+  border-color: rgba(var(--deep-teal-rgb), 0.46);
+  background: var(--surface-soft);
+  transform: translateY(-1px);
+}
+
 .ai-access-card {
   display: grid;
   flex: 0 0 auto;
@@ -1482,6 +1505,11 @@ select {
 }
 
 .error-message {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+  justify-content: space-between;
   margin: 0;
   padding: 12px 22px;
   border-bottom: 1px solid rgba(180, 35, 24, 0.22);

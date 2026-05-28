@@ -19,7 +19,7 @@ export type PdfUploadRateLimitResult = {
 const DEFAULT_PDF_DAILY_UPLOAD_LIMIT = 10;
 const PDF_UPLOAD_SESSION_COOKIE_NAME = "nordeditor_pdf_upload_session";
 const PDF_UPLOAD_LIMIT_MESSAGE =
-  "Daily free PDF upload limit reached. You can still edit/download your current PDF.";
+  "Daily free PDF upload limit reached. Need more uploads? Request early Pro access.";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 type MemoryRateLimitRecord = {

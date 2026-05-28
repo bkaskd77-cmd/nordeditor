@@ -1,23 +1,52 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 const FEEDBACK_EMAIL = process.env.NEXT_PUBLIC_FEEDBACK_EMAIL ?? "feedback@nordeditor.app";
 
 const FEEDBACK_CATEGORIES = [
   "Bug",
   "Feature request",
+  "Pro access request",
   "Confusing UX",
   "AI answer issue",
   "Other"
 ] as const;
 
+type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+
+type OpenFeedbackEventDetail = {
+  category?: FeedbackCategory;
+  feedback?: string;
+};
+
 export default function FeedbackModal() {
   const [isOpen, setIsOpen] = useState(false);
   const [contact, setContact] = useState("");
-  const [category, setCategory] = useState<(typeof FEEDBACK_CATEGORIES)[number]>("Bug");
+  const [category, setCategory] = useState<FeedbackCategory>("Bug");
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    function openFromApp(event: Event) {
+      const detail = (event as CustomEvent<OpenFeedbackEventDetail>).detail;
+
+      if (detail?.category) {
+        setCategory(detail.category);
+      }
+
+      if (typeof detail?.feedback === "string") {
+        setFeedback(detail.feedback);
+      }
+
+      setError("");
+      setIsOpen(true);
+    }
+
+    window.addEventListener("nordeditor:open-feedback", openFromApp);
+
+    return () => window.removeEventListener("nordeditor:open-feedback", openFromApp);
+  }, []);
 
   const mailtoHref = useMemo(() => {
     const subject = `NordEditor beta feedback: ${category}`;
@@ -101,7 +130,7 @@ export default function FeedbackModal() {
                 <select
                   value={category}
                   onChange={(event) =>
-                    setCategory(event.target.value as (typeof FEEDBACK_CATEGORIES)[number])
+                    setCategory(event.target.value as FeedbackCategory)
                   }
                 >
                   {FEEDBACK_CATEGORIES.map((feedbackCategory) => (

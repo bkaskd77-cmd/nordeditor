@@ -40,7 +40,8 @@ const DEFAULT_AI_MONTHLY_BUDGET_USD = 10;
 const MICRO_USD_PER_USD = 1_000_000;
 const AI_SESSION_COOKIE_NAME = "nordeditor_ai_session";
 const AI_ACCESS_COOKIE_NAME = "nordeditor_ai_access";
-const AI_LIMIT_MESSAGE = "Daily free AI limit reached. More AI access coming with Pro.";
+const AI_LIMIT_MESSAGE =
+  "Daily free AI limit reached. Need more AI? Request early Pro access.";
 const AI_ADMIN_LIMIT_MESSAGE =
   "Daily owner/testing AI limit reached. Manual PDF editing is still available.";
 const AI_BETA_LIMIT_MESSAGE =

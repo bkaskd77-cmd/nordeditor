@@ -149,7 +149,7 @@ const AI_KEY_INFO_TIMEOUT_MS = 90_000;
 const AI_SUGGESTED_EDITS_TIMEOUT_MS = 90_000;
 const AI_CUSTOM_QUESTION_TIMEOUT_MS = 90_000;
 const AI_LIMIT_REACHED_FALLBACK_MESSAGE =
-  "Daily free AI limit reached. More AI access coming with Pro.";
+  "Daily free AI limit reached. Need more AI? Request early Pro access.";
 const HIGHLIGHT_COLOR_VALUES: Record<
   HighlightColorName,
   { red: number; green: number; blue: number; opacity: number }
@@ -867,6 +867,7 @@ export default function PdfWorkspace() {
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
   const [draggingCommentId, setDraggingCommentId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [isPdfUploadLimitReached, setIsPdfUploadLimitReached] = useState(false);
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [isAiPanelFocused, setIsAiPanelFocused] = useState(false);
   const [isSummarizingPdf, setIsSummarizingPdf] = useState(false);
@@ -1373,6 +1374,22 @@ export default function PdfWorkspace() {
     draggingCommentRef.current = null;
   }
 
+  function openEarlyProAccessRequest(reason: "ai" | "uploads") {
+    const feedback =
+      reason === "ai"
+        ? "I would like early Pro access because I need more AI actions in NordEditor."
+        : "I would like early Pro access because I need more PDF uploads in NordEditor.";
+
+    window.dispatchEvent(
+      new CustomEvent("nordeditor:open-feedback", {
+        detail: {
+          category: "Pro access request",
+          feedback
+        }
+      })
+    );
+  }
+
   async function checkPdfUploadAllowance() {
     const response = await fetch("/api/pdf/upload-limit", {
       method: "POST",
@@ -1381,11 +1398,19 @@ export default function PdfWorkspace() {
     const result = (await response.json().catch(() => ({}))) as PdfUploadLimitResponse;
 
     if (!response.ok) {
-      throw new Error(
-        result.error ??
-          "PDF upload protection is temporarily unavailable. Please try again."
-      );
+      return {
+        allowed: false,
+        message:
+          result.error ?? "PDF upload protection is temporarily unavailable. Please try again.",
+        isUploadLimit: response.status === 429
+      };
     }
+
+    return {
+      allowed: true,
+      message: "",
+      isUploadLimit: false
+    };
   }
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -1399,6 +1424,7 @@ export default function PdfWorkspace() {
 
     if (!isPdf) {
       setError("NordEditor V1 supports PDF files only. Please choose a .pdf file.");
+      setIsPdfUploadLimitReached(false);
       event.target.value = "";
       return;
     }
@@ -1407,18 +1433,16 @@ export default function PdfWorkspace() {
       setError(
         `This PDF is ${formatFileSize(file.size)}. For V1, please choose a PDF under ${formatFileSize(MAX_PDF_UPLOAD_BYTES)}.`
       );
+      setIsPdfUploadLimitReached(false);
       event.target.value = "";
       return;
     }
 
-    try {
-      await checkPdfUploadAllowance();
-    } catch (uploadLimitError) {
-      setError(
-        uploadLimitError instanceof Error
-          ? uploadLimitError.message
-          : "PDF upload protection is temporarily unavailable. Please try again."
-      );
+    const uploadAllowance = await checkPdfUploadAllowance();
+
+    if (!uploadAllowance.allowed) {
+      setError(uploadAllowance.message);
+      setIsPdfUploadLimitReached(uploadAllowance.isUploadLimit);
       event.target.value = "";
       return;
     }
@@ -1497,9 +1521,11 @@ export default function PdfWorkspace() {
       setDidCopyAiCustomAnswer(false);
       setPdf(nextPdf);
       setError("");
+      setIsPdfUploadLimitReached(false);
       event.target.value = "";
     } catch {
       setError("The PDF could not be read.");
+      setIsPdfUploadLimitReached(false);
       event.target.value = "";
     }
   }
@@ -1571,6 +1597,7 @@ export default function PdfWorkspace() {
     setDidCopyAiCustomAnswer(false);
     setPdf(null);
     setError("");
+    setIsPdfUploadLimitReached(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -4774,6 +4801,8 @@ export default function PdfWorkspace() {
   const shouldShowAiAccessInput = canShowAiAccessInput && !isPrivateAiAccessActive;
   const shouldShowAiAccessStatus = isPrivateAiAccessActive;
   const aiRoleLabel = aiUsage?.roleLabel ?? "Public";
+  const isAiDailyLimitReached =
+    aiUsage?.role === "public" && aiUsage.limitReason === "user_daily";
   const aiUsageLabel = aiUsage
     ? `${aiRoleLabel} AI actions left today: ${aiUsage.remaining}/${aiUsage.limit}`
     : isLoadingAiUsage
@@ -4989,7 +5018,20 @@ export default function PdfWorkspace() {
         </div>
       ) : null}
 
-      {error ? <p className="error-message">{error}</p> : null}
+      {error ? (
+        <div className="error-message">
+          <span>{error}</span>
+          {isPdfUploadLimitReached ? (
+            <button
+              className="limit-pro-access-button"
+              type="button"
+              onClick={() => openEarlyProAccessRequest("uploads")}
+            >
+              Request early Pro access
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {hasPdf ? (
         <>
@@ -5066,6 +5108,15 @@ export default function PdfWorkspace() {
               >
                 <span>{aiUsageLabel}</span>
                 {isAiLimitReached ? <span>{aiLimitMessage}</span> : null}
+                {isAiDailyLimitReached ? (
+                  <button
+                    className="limit-pro-access-button"
+                    type="button"
+                    onClick={() => openEarlyProAccessRequest("ai")}
+                  >
+                    Request early Pro access
+                  </button>
+                ) : null}
               </div>
 
               {shouldShowAiAccessStatus ? (
