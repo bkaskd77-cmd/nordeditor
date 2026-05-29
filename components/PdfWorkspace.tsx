@@ -150,6 +150,14 @@ const AI_SUGGESTED_EDITS_TIMEOUT_MS = 90_000;
 const AI_CUSTOM_QUESTION_TIMEOUT_MS = 90_000;
 const AI_LIMIT_REACHED_FALLBACK_MESSAGE =
   "Daily free AI limit reached. Need more AI? Request early Pro access.";
+const LARGE_PDF_AI_FALLBACK_MESSAGE =
+  "This PDF is large for beta AI. Manual editing still works. Use Explain current page, or try a smaller PDF for whole-document AI.";
+const DEFAULT_AI_DOCUMENT_LIMITS: AiDocumentLimitsInfo = {
+  maxFileSizeMb: 3,
+  maxFileSizeBytes: 3 * 1024 * 1024,
+  maxPageCount: 10,
+  largePdfMessage: LARGE_PDF_AI_FALLBACK_MESSAGE
+};
 const HIGHLIGHT_COLOR_VALUES: Record<
   HighlightColorName,
   { red: number; green: number; blue: number; opacity: number }
@@ -214,6 +222,13 @@ type PdfUploadLimitResponse = {
     isLimited: boolean;
     message?: string;
   };
+};
+
+type AiDocumentLimitsInfo = {
+  maxFileSizeMb: number;
+  maxFileSizeBytes: number;
+  maxPageCount: number;
+  largePdfMessage: string;
 };
 
 function renderAiInlineMarkdown(text: string) {
@@ -897,6 +912,9 @@ export default function PdfWorkspace() {
   const [aiAccessMessage, setAiAccessMessage] = useState("");
   const [isApplyingAiAccess, setIsApplyingAiAccess] = useState(false);
   const [canShowAiAccessInput, setCanShowAiAccessInput] = useState(false);
+  const [aiDocumentLimits, setAiDocumentLimits] = useState<AiDocumentLimitsInfo>(
+    DEFAULT_AI_DOCUMENT_LIMITS
+  );
 
   const updateAiUsage = useCallback((nextUsage?: AiUsageInfo) => {
     if (nextUsage) {
@@ -921,6 +939,49 @@ export default function PdfWorkspace() {
       setIsLoadingAiUsage(false);
     }
   }, [updateAiUsage]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadAiDocumentLimits() {
+      try {
+        const response = await fetch("/api/ai/document-limits", {
+          method: "GET",
+          cache: "no-store"
+        });
+        const result = (await response.json()) as Partial<AiDocumentLimitsInfo>;
+
+        if (!isCancelled && response.ok) {
+          setAiDocumentLimits({
+            maxFileSizeMb:
+              typeof result.maxFileSizeMb === "number"
+                ? result.maxFileSizeMb
+                : DEFAULT_AI_DOCUMENT_LIMITS.maxFileSizeMb,
+            maxFileSizeBytes:
+              typeof result.maxFileSizeBytes === "number"
+                ? result.maxFileSizeBytes
+                : DEFAULT_AI_DOCUMENT_LIMITS.maxFileSizeBytes,
+            maxPageCount:
+              typeof result.maxPageCount === "number"
+                ? result.maxPageCount
+                : DEFAULT_AI_DOCUMENT_LIMITS.maxPageCount,
+            largePdfMessage:
+              typeof result.largePdfMessage === "string"
+                ? result.largePdfMessage
+                : DEFAULT_AI_DOCUMENT_LIMITS.largePdfMessage
+          });
+        }
+      } catch {
+        // Defaults are enough if the limits endpoint is temporarily unavailable.
+      }
+    }
+
+    void loadAiDocumentLimits();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -3784,6 +3845,21 @@ export default function PdfWorkspace() {
     clearHighlightInteraction();
   }
 
+  function getWholeDocumentAiBlockMessage() {
+    if (!pdf) {
+      return "";
+    }
+
+    if (totalPages < 1) {
+      return "The PDF is still loading. Please wait a moment before using whole-document AI.";
+    }
+
+    const isTooLarge = pdf.size > aiDocumentLimits.maxFileSizeBytes;
+    const hasTooManyPages = totalPages > aiDocumentLimits.maxPageCount;
+
+    return isTooLarge || hasTooManyPages ? aiDocumentLimits.largePdfMessage : "";
+  }
+
   async function summarizePdfWithAi() {
     setAiResponseView("summary");
 
@@ -3797,6 +3873,15 @@ export default function PdfWorkspace() {
       setAiError(aiUsage.message ?? AI_LIMIT_REACHED_FALLBACK_MESSAGE);
       setIsAiPanelOpen(true);
       void refreshAiUsage();
+      return;
+    }
+
+    const documentBlockMessage = getWholeDocumentAiBlockMessage();
+
+    if (documentBlockMessage) {
+      setAiError(documentBlockMessage);
+      setAiSummary("");
+      setIsAiPanelOpen(true);
       return;
     }
 
@@ -3833,6 +3918,7 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
+      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_SUMMARY_TIMEOUT_MS);
@@ -4050,6 +4136,15 @@ export default function PdfWorkspace() {
       return;
     }
 
+    const documentBlockMessage = getWholeDocumentAiBlockMessage();
+
+    if (documentBlockMessage) {
+      setAiError(documentBlockMessage);
+      setAiKeyInfo("");
+      setIsAiPanelOpen(true);
+      return;
+    }
+
     if (
       isSummarizingPdf ||
       isExplainingPage ||
@@ -4083,6 +4178,7 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
+      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_KEY_INFO_TIMEOUT_MS);
@@ -4146,6 +4242,15 @@ export default function PdfWorkspace() {
       return;
     }
 
+    const documentBlockMessage = getWholeDocumentAiBlockMessage();
+
+    if (documentBlockMessage) {
+      setAiError(documentBlockMessage);
+      setAiSuggestedEdits("");
+      setIsAiPanelOpen(true);
+      return;
+    }
+
     if (
       isSummarizingPdf ||
       isExplainingPage ||
@@ -4179,6 +4284,7 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
+      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_SUGGESTED_EDITS_TIMEOUT_MS);
@@ -4255,6 +4361,15 @@ export default function PdfWorkspace() {
       return;
     }
 
+    const documentBlockMessage = getWholeDocumentAiBlockMessage();
+
+    if (documentBlockMessage) {
+      setAiError(documentBlockMessage);
+      setAiCustomAnswer("");
+      setIsAiPanelOpen(true);
+      return;
+    }
+
     if (
       isSummarizingPdf ||
       isExplainingPage ||
@@ -4288,6 +4403,7 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
+      formData.append("pageCount", String(totalPages));
       formData.append("question", question);
 
       const controller = new AbortController();

@@ -8,6 +8,11 @@ import {
   recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
+import {
+  LARGE_PDF_AI_MESSAGE,
+  checkWholeDocumentAiLimits,
+  getPdfPageCountForAiLimit
+} from "../../../../lib/aiDocumentLimits";
 import { getAiModel } from "../../../../lib/aiModels";
 import { logSafeServerError } from "../../../../lib/safeErrorLog";
 
@@ -65,7 +70,7 @@ function getOpenAIErrorMessage(error: unknown) {
     }
 
     if (maybeError.status === 413) {
-      return "This PDF is too large for NordEditor AI in V1. Please try a PDF under 10 MB.";
+      return LARGE_PDF_AI_MESSAGE;
     }
 
     if (maybeError.message) {
@@ -97,11 +102,13 @@ export async function POST(request: Request) {
 
   let pdfFile: File | null = null;
   let question = "";
+  let pageCount: number | null = null;
 
   try {
     const formData = await request.formData();
     const uploadedFile = formData.get("pdf");
     const userQuestion = formData.get("question");
+    const requestedPageCount = Number(formData.get("pageCount"));
 
     if (uploadedFile instanceof File) {
       pdfFile = uploadedFile;
@@ -109,6 +116,10 @@ export async function POST(request: Request) {
 
     if (typeof userQuestion === "string") {
       question = userQuestion.trim();
+    }
+
+    if (Number.isFinite(requestedPageCount) && requestedPageCount > 0) {
+      pageCount = Math.floor(requestedPageCount);
     }
   } catch {
     return jsonError("The PDF or question could not be read. Please try again.", 400);
@@ -134,6 +145,15 @@ export async function POST(request: Request) {
     return jsonError("This PDF is too large for NordEditor AI in V1. Please try a PDF under 10 MB.", 413);
   }
 
+  const documentLimit = checkWholeDocumentAiLimits({
+    fileSizeBytes: pdfFile.size,
+    pageCount
+  });
+
+  if (!documentLimit.allowed) {
+    return jsonError(documentLimit.message, 413);
+  }
+
   try {
     const pdfBytes = Buffer.from(await pdfFile.arrayBuffer());
     const pdfBase64 = pdfBytes.toString("base64");
@@ -141,6 +161,16 @@ export async function POST(request: Request) {
 
     if (pdfBytes.byteLength === 0 || pdfBase64.length === 0) {
       return jsonError("The uploaded PDF is empty. Please choose a valid PDF file.", 400);
+    }
+
+    const resolvedPageCount = pageCount ?? (await getPdfPageCountForAiLimit(pdfBytes));
+    const resolvedDocumentLimit = checkWholeDocumentAiLimits({
+      fileSizeBytes: pdfBytes.byteLength,
+      pageCount: resolvedPageCount
+    });
+
+    if (!resolvedDocumentLimit.allowed) {
+      return jsonError(resolvedDocumentLimit.message, 413);
     }
 
     if (pdfDataUrl.length <= PDF_DATA_URL_PREFIX.length) {
