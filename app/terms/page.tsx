@@ -36,6 +36,7 @@ export default function TermsPage() {
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>
         <Link href="/contact">Contact</Link>
+        <Link href="/beta-limits">Beta limits</Link>
       </footer>
     </main>
   );

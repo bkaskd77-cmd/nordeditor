@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
-const FEEDBACK_EMAIL = process.env.NEXT_PUBLIC_FEEDBACK_EMAIL ?? "feedback@nordeditor.app";
+const FEEDBACK_EMAIL = process.env.NEXT_PUBLIC_FEEDBACK_EMAIL ?? "nordeditor@gmail.com";
 
 const FEEDBACK_CATEGORIES = [
   "Bug",
@@ -102,7 +102,7 @@ export default function FeedbackModal() {
             <div className="feedback-modal-header">
               <div>
                 <p className="eyebrow">Beta feedback</p>
-                <h2 id="feedback-title">Tell us what to improve</h2>
+                <h2 id="feedback-title">Help us improve NordEditor</h2>
               </div>
               <button
                 className="feedback-close-button"

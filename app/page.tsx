@@ -45,6 +45,8 @@ export default function Home() {
         <span aria-hidden="true">&bull;</span>
         <Link href="/contact">Contact</Link>
         <span aria-hidden="true">&bull;</span>
+        <Link href="/beta-limits">Beta limits</Link>
+        <span aria-hidden="true">&bull;</span>
         <span>&copy; NordEditor</span>
       </footer>
 
