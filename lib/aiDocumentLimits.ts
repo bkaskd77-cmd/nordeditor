@@ -11,7 +11,7 @@ const DEFAULT_AI_MAX_FILE_SIZE_MB = 3;
 const DEFAULT_AI_MAX_PAGE_COUNT = 10;
 
 export const LARGE_PDF_AI_MESSAGE =
-  "This PDF is large for beta AI. Manual editing still works. Use Explain current page, or try a smaller PDF for whole-document AI.";
+  "This PDF is large for beta AI. Manual editing still works. Large-document AI will be available with Pro. You can still use Explain current page.";
 
 function getConfiguredPositiveNumber(name: string, fallback: number) {
   const configuredValue = Number(process.env[name]);

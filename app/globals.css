@@ -1388,6 +1388,12 @@ select {
   color: var(--danger) !important;
 }
 
+.ai-response-error-block {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+
 .ai-send-button {
   min-height: 42px;
   flex: 0 0 auto;

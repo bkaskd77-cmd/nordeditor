@@ -151,7 +151,7 @@ const AI_CUSTOM_QUESTION_TIMEOUT_MS = 90_000;
 const AI_LIMIT_REACHED_FALLBACK_MESSAGE =
   "Daily free AI limit reached. Need more AI? Request early Pro access.";
 const LARGE_PDF_AI_FALLBACK_MESSAGE =
-  "This PDF is large for beta AI. Manual editing still works. Use Explain current page, or try a smaller PDF for whole-document AI.";
+  "This PDF is large for beta AI. Manual editing still works. Large-document AI will be available with Pro. You can still use Explain current page.";
 const DEFAULT_AI_DOCUMENT_LIMITS: AiDocumentLimitsInfo = {
   maxFileSizeMb: 3,
   maxFileSizeBytes: 3 * 1024 * 1024,
@@ -1435,11 +1435,13 @@ export default function PdfWorkspace() {
     draggingCommentRef.current = null;
   }
 
-  function openEarlyProAccessRequest(reason: "ai" | "uploads") {
+  function openEarlyProAccessRequest(reason: "ai" | "uploads" | "large-document-ai") {
     const feedback =
       reason === "ai"
         ? "I would like early Pro access because I need more AI actions in NordEditor."
-        : "I would like early Pro access because I need more PDF uploads in NordEditor.";
+        : reason === "uploads"
+          ? "I would like early Pro access because I need more PDF uploads in NordEditor."
+          : "I would like Pro access for large-document AI in NordEditor.";
 
     window.dispatchEvent(
       new CustomEvent("nordeditor:open-feedback", {
@@ -5002,6 +5004,8 @@ export default function PdfWorkspace() {
   const activeAiPanelNote = isAiLimitReached
     ? aiLimitMessage
     : "Suggestions are not applied automatically.";
+  const isLargePdfAiError =
+    aiError === aiDocumentLimits.largePdfMessage || aiError === LARGE_PDF_AI_FALLBACK_MESSAGE;
 
   return (
     <section
@@ -5330,7 +5334,18 @@ export default function PdfWorkspace() {
                   {isAiResponseLoading ? (
                     <p>{activeAiLoadingText}</p>
                   ) : aiError ? (
-                    <p className="ai-response-error">{aiError}</p>
+                    <div className="ai-response-error-block">
+                      <p className="ai-response-error">{aiError}</p>
+                      {isLargePdfAiError ? (
+                        <button
+                          className="limit-pro-access-button"
+                          type="button"
+                          onClick={() => openEarlyProAccessRequest("large-document-ai")}
+                        >
+                          Request Pro access
+                        </button>
+                      ) : null}
+                    </div>
                   ) : activeAiResponseText ? (
                     <div className="ai-response-markdown">
                       {renderAiMarkdown(activeAiResponseText)}
