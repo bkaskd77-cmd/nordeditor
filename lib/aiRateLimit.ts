@@ -32,11 +32,24 @@ export type AiRateLimitResult = {
   monthlyBudgetMicroUsd: number;
 };
 
+export type AiAccessAttemptLimitResult = {
+  allowed: boolean;
+  count: number;
+  limit: number;
+  resetAt: string;
+  resetAtMs: number;
+  secondsUntilReset: number;
+  key: string;
+  headers: Headers;
+};
+
 const DEFAULT_AI_DAILY_LIMIT = 5;
 const DEFAULT_AI_ADMIN_DAILY_LIMIT = 50;
 const DEFAULT_AI_BETA_DAILY_LIMIT = 20;
 const DEFAULT_AI_GLOBAL_DAILY_REQUEST_LIMIT = 100;
 const DEFAULT_AI_MONTHLY_BUDGET_USD = 10;
+const DEFAULT_AI_ACCESS_ATTEMPT_LIMIT = 5;
+const DEFAULT_AI_ACCESS_ATTEMPT_WINDOW_MINUTES = 15;
 const MICRO_USD_PER_USD = 1_000_000;
 const AI_SESSION_COOKIE_NAME = "nordeditor_ai_session";
 const AI_ACCESS_COOKIE_NAME = "nordeditor_ai_access";
@@ -50,6 +63,8 @@ const AI_GLOBAL_DAILY_LIMIT_MESSAGE =
   "Daily beta AI request limit reached. Manual PDF editing is still available.";
 const AI_MONTHLY_BUDGET_LIMIT_MESSAGE =
   "Monthly beta AI limit reached. Manual PDF editing is still available.";
+const AI_ACCESS_ATTEMPT_LIMIT_MESSAGE =
+  "Too many access-code attempts. Please wait a few minutes and try again.";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const AI_ACCESS_MAX_AGE_SECONDS = 60 * 60 * 12;
 
@@ -85,6 +100,24 @@ function getConfiguredPositiveInteger(name: string, fallback: number) {
   }
 
   return fallback;
+}
+
+function getAccessAttemptWindow() {
+  const windowMinutes = getConfiguredPositiveInteger(
+    "AI_ACCESS_ATTEMPT_WINDOW_MINUTES",
+    DEFAULT_AI_ACCESS_ATTEMPT_WINDOW_MINUTES
+  );
+  const windowMs = windowMinutes * 60 * 1000;
+  const nowMs = Date.now();
+  const windowNumber = Math.floor(nowMs / windowMs);
+  const resetAtMs = (windowNumber + 1) * windowMs;
+
+  return {
+    windowNumber,
+    resetAtMs,
+    resetAt: new Date(resetAtMs).toISOString(),
+    secondsUntilReset: Math.max(60, Math.ceil((resetAtMs - nowMs) / 1000))
+  };
 }
 
 export function getDailyLimitForRole(role: AiAccessRole) {
@@ -299,6 +332,10 @@ function getClientIp(request: Request) {
   );
 }
 
+function getIpIdentityHash(request: Request) {
+  return createHash("sha256").update(getClientIp(request)).digest("hex");
+}
+
 function getIdentity(request: Request) {
   const headers = new Headers();
   let sessionId = getCookieValue(request, AI_SESSION_COOKIE_NAME);
@@ -438,6 +475,10 @@ async function incrementCountBy(key: string, amount: number, secondsUntilReset: 
   return null;
 }
 
+async function deleteCount(key: string) {
+  return runRedisCommand<number>(["DEL", key]);
+}
+
 function getMemoryCount(key: string) {
   const memoryStore = getMemoryStore();
   const record = memoryStore.get(key);
@@ -473,6 +514,10 @@ function incrementMemoryCountBy(key: string, amount: number, resetAtMs: number) 
   });
 
   return nextCount;
+}
+
+function deleteMemoryCount(key: string) {
+  getMemoryStore().delete(key);
 }
 
 function microUsdToUsd(microUsd: number) {
@@ -624,6 +669,74 @@ function estimateAiCostMicroUsd(model: string, usage: unknown) {
   return Math.max(
     1,
     Math.ceil(inputTokens * modelCost.input + outputTokens * modelCost.output)
+  );
+}
+
+export async function getAiAccessAttemptLimit(
+  request: Request
+): Promise<AiAccessAttemptLimitResult> {
+  const limit = getConfiguredPositiveInteger(
+    "AI_ACCESS_ATTEMPT_LIMIT",
+    DEFAULT_AI_ACCESS_ATTEMPT_LIMIT
+  );
+  const attemptWindow = getAccessAttemptWindow();
+  const identityHash = getIpIdentityHash(request);
+  const key = `nordeditor:ai:access-attempt:${attemptWindow.windowNumber}:${identityHash}`;
+  const count = (await getCount(key)) ?? getMemoryCount(key);
+  const headers = new Headers();
+
+  if (count >= limit) {
+    headers.set("Retry-After", String(attemptWindow.secondsUntilReset));
+  }
+
+  return {
+    allowed: count < limit,
+    count,
+    limit,
+    resetAt: attemptWindow.resetAt,
+    resetAtMs: attemptWindow.resetAtMs,
+    secondsUntilReset: attemptWindow.secondsUntilReset,
+    key,
+    headers
+  };
+}
+
+export async function recordAiAccessAttemptFailure(
+  attemptLimit: AiAccessAttemptLimitResult
+) {
+  const nextCount =
+    (await incrementCount(attemptLimit.key, attemptLimit.secondsUntilReset)) ??
+    incrementMemoryCount(attemptLimit.key, attemptLimit.resetAtMs);
+
+  attemptLimit.count = nextCount;
+  attemptLimit.allowed = nextCount < attemptLimit.limit;
+
+  if (!attemptLimit.allowed) {
+    attemptLimit.headers.set("Retry-After", String(attemptLimit.secondsUntilReset));
+  }
+
+  return attemptLimit;
+}
+
+export async function clearAiAccessAttemptFailures(
+  attemptLimit: AiAccessAttemptLimitResult
+) {
+  const durableDeleteResult = await deleteCount(attemptLimit.key);
+
+  if (durableDeleteResult === null) {
+    deleteMemoryCount(attemptLimit.key);
+  }
+}
+
+export function createAiAccessAttemptLimitResponse(
+  attemptLimit: AiAccessAttemptLimitResult
+) {
+  return NextResponse.json(
+    { error: AI_ACCESS_ATTEMPT_LIMIT_MESSAGE },
+    {
+      status: 429,
+      headers: attemptLimit.headers
+    }
   );
 }
 

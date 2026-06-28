@@ -3920,7 +3920,6 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
-      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_SUMMARY_TIMEOUT_MS);
@@ -4180,7 +4179,6 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
-      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_KEY_INFO_TIMEOUT_MS);
@@ -4286,7 +4284,6 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
-      formData.append("pageCount", String(totalPages));
 
       const controller = new AbortController();
       timeoutId = window.setTimeout(() => controller.abort(), AI_SUGGESTED_EDITS_TIMEOUT_MS);
@@ -4405,7 +4402,6 @@ export default function PdfWorkspace() {
 
       const formData = new FormData();
       formData.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), pdf.name);
-      formData.append("pageCount", String(totalPages));
       formData.append("question", question);
 
       const controller = new AbortController();

@@ -5,11 +5,13 @@ import {
   createAiJsonError,
   createAiJsonResponse,
   createAiLimitReachedResponse,
+  getAiRateLimitStatus,
   recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
 import {
   LARGE_PDF_AI_MESSAGE,
+  PDF_PAGE_COUNT_ERROR_MESSAGE,
   checkWholeDocumentAiLimits,
   getPdfPageCountForAiLimit
 } from "../../../../lib/aiDocumentLimits";
@@ -99,20 +101,20 @@ export async function POST(request: Request) {
     );
   }
 
+  const preflightRateLimit = await getAiRateLimitStatus(request);
+
+  if (!preflightRateLimit.allowed) {
+    return createAiLimitReachedResponse(preflightRateLimit);
+  }
+
   let pdfFile: File | null = null;
-  let pageCount: number | null = null;
 
   try {
     const formData = await request.formData();
     const uploadedFile = formData.get("pdf");
-    const requestedPageCount = Number(formData.get("pageCount"));
 
     if (uploadedFile instanceof File) {
       pdfFile = uploadedFile;
-    }
-
-    if (Number.isFinite(requestedPageCount) && requestedPageCount > 0) {
-      pageCount = Math.floor(requestedPageCount);
     }
   } catch {
     return jsonError("The PDF could not be read. Please upload it again.", 400);
@@ -134,8 +136,7 @@ export async function POST(request: Request) {
   }
 
   const documentLimit = checkWholeDocumentAiLimits({
-    fileSizeBytes: pdfFile.size,
-    pageCount
+    fileSizeBytes: pdfFile.size
   });
 
   if (!documentLimit.allowed) {
@@ -144,14 +145,16 @@ export async function POST(request: Request) {
 
   try {
     const pdfBytes = Buffer.from(await pdfFile.arrayBuffer());
-    const pdfBase64 = pdfBytes.toString("base64");
-    const pdfDataUrl = `${PDF_DATA_URL_PREFIX}${pdfBase64}`;
 
-    if (pdfBytes.byteLength === 0 || pdfBase64.length === 0) {
+    if (pdfBytes.byteLength === 0) {
       return jsonError("The uploaded PDF is empty. Please choose a valid PDF file.", 400);
     }
 
-    const resolvedPageCount = pageCount ?? (await getPdfPageCountForAiLimit(pdfBytes));
+    const resolvedPageCount = await getPdfPageCountForAiLimit(pdfBytes);
+
+    if (resolvedPageCount === null) {
+      return jsonError(PDF_PAGE_COUNT_ERROR_MESSAGE, 400);
+    }
     const resolvedDocumentLimit = checkWholeDocumentAiLimits({
       fileSizeBytes: pdfBytes.byteLength,
       pageCount: resolvedPageCount
@@ -160,6 +163,9 @@ export async function POST(request: Request) {
     if (!resolvedDocumentLimit.allowed) {
       return jsonError(resolvedDocumentLimit.message, 413);
     }
+
+    const pdfBase64 = pdfBytes.toString("base64");
+    const pdfDataUrl = `${PDF_DATA_URL_PREFIX}${pdfBase64}`;
 
     if (pdfDataUrl.length <= PDF_DATA_URL_PREFIX.length) {
       return jsonError("The PDF could not be prepared for AI key information extraction.", 400);

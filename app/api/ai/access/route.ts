@@ -1,14 +1,24 @@
 import { NextResponse } from "next/server";
 import {
+  clearAiAccessAttemptFailures,
+  createAiAccessAttemptLimitResponse,
   createAiAccessClearCookieHeader,
   createAiAccessCookieHeader,
+  getAiAccessAttemptLimit,
   getAiRateLimitStatus,
+  recordAiAccessAttemptFailure,
   validateAiAccessCode
 } from "../../../../lib/aiRateLimit";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const attemptLimit = await getAiAccessAttemptLimit(request);
+
+  if (!attemptLimit.allowed) {
+    return createAiAccessAttemptLimitResponse(attemptLimit);
+  }
+
   const body = (await request.json().catch(() => null)) as { code?: string } | null;
   const code = body?.code?.trim() ?? "";
 
@@ -22,11 +32,19 @@ export async function POST(request: Request) {
   const role = validateAiAccessCode(code);
 
   if (!role || role === "public") {
+    await recordAiAccessAttemptFailure(attemptLimit);
+
+    if (!attemptLimit.allowed) {
+      return createAiAccessAttemptLimitResponse(attemptLimit);
+    }
+
     return NextResponse.json(
       { error: "That access code was not recognized." },
-      { status: 401 }
+      { status: 401, headers: attemptLimit.headers }
     );
   }
+
+  await clearAiAccessAttemptFailures(attemptLimit);
 
   const accessCookie = createAiAccessCookieHeader(role);
 

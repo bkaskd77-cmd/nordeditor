@@ -13,6 +13,9 @@ const DEFAULT_AI_MAX_PAGE_COUNT = 10;
 export const LARGE_PDF_AI_MESSAGE =
   "This PDF is large for beta AI. Manual editing still works. Large-document AI will be available with Pro. You can still use Explain current page.";
 
+export const PDF_PAGE_COUNT_ERROR_MESSAGE =
+  "NordEditor AI could not verify this PDF's page count. Manual editing still works. Please try another PDF.";
+
 function getConfiguredPositiveNumber(name: string, fallback: number) {
   const configuredValue = Number(process.env[name]);
 

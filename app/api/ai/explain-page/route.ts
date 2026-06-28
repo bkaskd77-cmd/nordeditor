@@ -5,6 +5,7 @@ import {
   createAiJsonError,
   createAiJsonResponse,
   createAiLimitReachedResponse,
+  getAiRateLimitStatus,
   recordAiResponseUsage,
   type AiRateLimitResult
 } from "../../../../lib/aiRateLimit";
@@ -92,6 +93,12 @@ export async function POST(request: Request) {
       "OpenAI API key is missing. Add OPENAI_API_KEY to .env.local and restart the server.",
       500
     );
+  }
+
+  const preflightRateLimit = await getAiRateLimitStatus(request);
+
+  if (!preflightRateLimit.allowed) {
+    return createAiLimitReachedResponse(preflightRateLimit);
   }
 
   let pageNumber = 0;
