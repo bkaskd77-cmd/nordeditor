@@ -148,6 +148,7 @@ const AI_PAGE_EXPLANATION_TIMEOUT_MS = 90_000;
 const AI_KEY_INFO_TIMEOUT_MS = 90_000;
 const AI_SUGGESTED_EDITS_TIMEOUT_MS = 90_000;
 const AI_CUSTOM_QUESTION_TIMEOUT_MS = 90_000;
+const AI_ACCESS_LOCK_UNTIL_STORAGE_KEY = "nordeditor_ai_access_lock_until";
 const AI_LIMIT_REACHED_FALLBACK_MESSAGE =
   "Daily free AI limit reached. Need more AI? Request early Pro access.";
 const LARGE_PDF_AI_FALLBACK_MESSAGE =
@@ -911,6 +912,7 @@ export default function PdfWorkspace() {
   const [aiAccessCode, setAiAccessCode] = useState("");
   const [aiAccessMessage, setAiAccessMessage] = useState("");
   const [isApplyingAiAccess, setIsApplyingAiAccess] = useState(false);
+  const [aiAccessLockSecondsRemaining, setAiAccessLockSecondsRemaining] = useState(0);
   const [canShowAiAccessInput, setCanShowAiAccessInput] = useState(false);
   const [aiDocumentLimits, setAiDocumentLimits] = useState<AiDocumentLimitsInfo>(
     DEFAULT_AI_DOCUMENT_LIMITS
@@ -986,15 +988,56 @@ export default function PdfWorkspace() {
   useEffect(() => {
     const timerId = window.setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
+      const storedLockUntil = Number(
+        window.localStorage.getItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY)
+      );
 
       setCanShowAiAccessInput(params.get("nord_admin") === "1");
+
+      if (Number.isFinite(storedLockUntil) && storedLockUntil > Date.now()) {
+        setAiAccessLockSecondsRemaining(
+          Math.max(1, Math.ceil((storedLockUntil - Date.now()) / 1000))
+        );
+      } else {
+        window.localStorage.removeItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY);
+      }
     }, 0);
 
     return () => window.clearTimeout(timerId);
   }, []);
 
+  const isAiAccessLocked = aiAccessLockSecondsRemaining > 0;
+
+  useEffect(() => {
+    if (!isAiAccessLocked) {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      const storedLockUntil = Number(
+        window.localStorage.getItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY)
+      );
+      const nextSecondsRemaining = Number.isFinite(storedLockUntil)
+        ? Math.max(0, Math.ceil((storedLockUntil - Date.now()) / 1000))
+        : 0;
+
+      setAiAccessLockSecondsRemaining(nextSecondsRemaining);
+
+      if (nextSecondsRemaining === 0) {
+        window.localStorage.removeItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY);
+        setAiAccessMessage("You can try your access code again.");
+      }
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, [isAiAccessLocked]);
+
   async function applyAiAccessCode() {
     const code = aiAccessCode.trim();
+
+    if (isAiAccessLocked) {
+      return;
+    }
 
     if (!code) {
       setAiAccessMessage("Enter your private beta/testing access code first.");
@@ -1021,9 +1064,24 @@ export default function PdfWorkspace() {
       updateAiUsage(result.aiUsage);
 
       if (!response.ok) {
+        if (response.status === 429) {
+          const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+          const lockSeconds =
+            Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+              ? Math.ceil(retryAfterSeconds)
+              : 60;
+          const lockUntil = Date.now() + lockSeconds * 1000;
+
+          window.localStorage.setItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY, String(lockUntil));
+          setAiAccessLockSecondsRemaining(lockSeconds);
+          setAiAccessCode("");
+        }
+
         throw new Error(result.error ?? "Private beta/testing access could not be enabled.");
       }
 
+      window.localStorage.removeItem(AI_ACCESS_LOCK_UNTIL_STORAGE_KEY);
+      setAiAccessLockSecondsRemaining(0);
       setAiAccessCode("");
       setAiAccessMessage(result.message ?? "Private beta/testing access is active.");
 
@@ -5259,9 +5317,10 @@ export default function PdfWorkspace() {
                     <input
                       className="ai-access-input"
                       type="password"
-                      placeholder="Access code"
+                      placeholder={isAiAccessLocked ? "Temporarily locked" : "Access code"}
                       value={aiAccessCode}
                       onChange={(event) => setAiAccessCode(event.target.value)}
+                      disabled={isApplyingAiAccess || isAiAccessLocked}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
@@ -5273,12 +5332,26 @@ export default function PdfWorkspace() {
                       className="ai-access-button"
                       type="button"
                       onClick={applyAiAccessCode}
-                      disabled={isApplyingAiAccess}
+                      disabled={isApplyingAiAccess || isAiAccessLocked}
                     >
-                      {isApplyingAiAccess ? "Checking..." : "Apply"}
+                      {isApplyingAiAccess
+                        ? "Checking..."
+                        : isAiAccessLocked
+                          ? `Wait ${Math.floor(aiAccessLockSecondsRemaining / 60)}:${String(
+                              aiAccessLockSecondsRemaining % 60
+                            ).padStart(2, "0")}`
+                          : "Apply"}
                     </button>
                   </div>
-                  {aiAccessMessage ? <p>{aiAccessMessage}</p> : null}
+                  {isAiAccessLocked ? (
+                    <p>
+                      Too many access-code attempts. Try again in{" "}
+                      {Math.floor(aiAccessLockSecondsRemaining / 60)}:
+                      {String(aiAccessLockSecondsRemaining % 60).padStart(2, "0")}.
+                    </p>
+                  ) : aiAccessMessage ? (
+                    <p>{aiAccessMessage}</p>
+                  ) : null}
                 </div>
               ) : null}
 

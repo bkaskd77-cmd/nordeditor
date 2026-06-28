@@ -1252,6 +1252,13 @@ select {
   outline: 3px solid rgba(20, 92, 114, 0.12);
 }
 
+.ai-access-input:disabled {
+  background: var(--surface-soft);
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .ai-access-button {
   min-height: 36px;
   border: 1px solid rgba(var(--deep-teal-rgb), 0.24);
